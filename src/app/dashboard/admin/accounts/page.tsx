@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, Trash2, RefreshCw, Monitor } from "lucide-react"
+import { Plus, Trash2, RefreshCw, Monitor, Download, Loader2 } from "lucide-react"
 import type { FbAdAccount, FbPixel, FbPage } from "@/types/database"
 
 export default function AccountsPage() {
@@ -17,13 +16,11 @@ export default function AccountsPage() {
   const [pixels, setPixels] = useState<FbPixel[]>([])
   const [pages, setPages] = useState<FbPage[]>([])
   const [loading, setLoading] = useState(true)
-  const [showAdd, setShowAdd] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importStatus, setImportStatus] = useState("")
 
-  const [accountId, setAccountId] = useState("")
-  const [accountName, setAccountName] = useState("")
   const [accessToken, setAccessToken] = useState("")
-  const [currency, setCurrency] = useState("EUR")
-  const [timezone, setTimezone] = useState("Europe/Rome")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -42,30 +39,33 @@ export default function AccountsPage() {
 
   useEffect(() => { load() }, [load])
 
-  const handleAdd = async () => {
-    const res = await fetch("/api/admin/data", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "insert",
-        table: "fb_ad_accounts",
-        record: {
-          account_id: accountId.startsWith("act_") ? accountId : `act_${accountId}`,
-          name: accountName,
-          access_token: accessToken,
-          currency,
-          timezone,
-        },
-      }),
-    })
-    const result = await res.json()
-    if (!result.error) {
-      setShowAdd(false)
-      setAccountId("")
-      setAccountName("")
+  const handleImport = async () => {
+    setImporting(true)
+    setImportStatus("Connessione a Facebook...")
+    try {
+      const res = await fetch("/api/facebook/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken }),
+      })
+      const result = await res.json()
+      if (result.error) {
+        setImportStatus(`Errore: ${result.error}`)
+        setImporting(false)
+        return
+      }
+      const r = result.results
+      setImportStatus(`Importati: ${r.accounts} account, ${r.pixels} pixel, ${r.pages} pagine`)
       setAccessToken("")
       load()
+      setTimeout(() => {
+        setShowImport(false)
+        setImportStatus("")
+      }, 2000)
+    } catch {
+      setImportStatus("Errore di connessione")
     }
+    setImporting(false)
   }
 
   const handleDelete = async (id: string) => {
@@ -78,15 +78,27 @@ export default function AccountsPage() {
     load()
   }
 
-  const handleSyncPixelsPages = async (account: FbAdAccount) => {
+  const handleRefresh = async () => {
+    if (fbAccounts.length === 0) return
+    const token = fbAccounts[0].access_token
+    if (!token) return
+    setImportStatus("Aggiornamento in corso...")
     try {
-      await fetch("/api/facebook/sync-assets", {
+      const res = await fetch("/api/facebook/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId: account.id }),
+        body: JSON.stringify({ accessToken: token }),
       })
+      const result = await res.json()
+      if (result.results) {
+        const r = result.results
+        setImportStatus(`Aggiornati: ${r.accounts} account, ${r.pixels} pixel, ${r.pages} pagine`)
+      }
       load()
-    } catch { /* ignore */ }
+      setTimeout(() => setImportStatus(""), 3000)
+    } catch {
+      setImportStatus("Errore aggiornamento")
+    }
   }
 
   if (loading) {
@@ -103,52 +115,53 @@ export default function AccountsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Account Facebook</h1>
           <p className="text-gray-500">{fbAccounts.length} account collegati</p>
+          {importStatus && <p className="text-sm text-blue-500 mt-1">{importStatus}</p>}
         </div>
-        <Dialog open={showAdd} onOpenChange={setShowAdd}>
-          <DialogTrigger asChild>
-            <Button><Plus size={16} /> Aggiungi Account</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Aggiungi Account Facebook</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium block mb-1.5">Account ID</label>
-                <Input value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="act_XXXXXXXXX" />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-1.5">Nome</label>
-                <Input value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder="Nome account" />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-1.5">Access Token</label>
-                <Input value={accessToken} onChange={(e) => setAccessToken(e.target.value)} placeholder="Token di accesso" type="password" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+        <div className="flex gap-2">
+          {fbAccounts.length > 0 && (
+            <Button variant="outline" onClick={handleRefresh}>
+              <RefreshCw size={16} /> Aggiorna Tutti
+            </Button>
+          )}
+          <Dialog open={showImport} onOpenChange={setShowImport}>
+            <DialogTrigger asChild>
+              <Button><Download size={16} /> Importa da Facebook</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Importa Account Facebook</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-500">
+                  Inserisci il tuo Access Token di Facebook. Verranno importati automaticamente tutti gli account pubblicitari, pixel e pagine associati.
+                </p>
                 <div>
-                  <label className="text-sm font-medium block mb-1.5">Valuta</label>
-                  <Select value={currency} onValueChange={setCurrency}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="EUR">EUR</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="GBP">GBP</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <label className="text-sm font-medium block mb-1.5">Access Token</label>
+                  <Input
+                    value={accessToken}
+                    onChange={(e) => setAccessToken(e.target.value)}
+                    placeholder="Incolla qui il tuo access token"
+                    type="password"
+                  />
                 </div>
-                <div>
-                  <label className="text-sm font-medium block mb-1.5">Timezone</label>
-                  <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-                </div>
+                <p className="text-xs text-gray-400">
+                  Puoi ottenere il token da Facebook Business Settings o dal Graph API Explorer.
+                </p>
+                {importStatus && (
+                  <p className={`text-sm ${importStatus.includes("Errore") ? "text-red-500" : "text-blue-500"}`}>
+                    {importStatus}
+                  </p>
+                )}
               </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAdd(false)}>Annulla</Button>
-              <Button onClick={handleAdd} disabled={!accountId || !accountName || !accessToken}>Aggiungi</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowImport(false)}>Annulla</Button>
+                <Button onClick={handleImport} disabled={!accessToken || importing}>
+                  {importing ? <><Loader2 size={16} className="animate-spin" /> Importazione...</> : <><Plus size={16} /> Importa</>}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {fbAccounts.length === 0 ? (
@@ -156,7 +169,7 @@ export default function AccountsPage() {
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Monitor size={48} className="text-gray-300 mb-4" />
             <p className="text-gray-500 text-lg">Nessun account collegato</p>
-            <p className="text-gray-400 text-sm">Aggiungi il tuo primo account Facebook Ads</p>
+            <p className="text-gray-400 text-sm mt-1">Clicca &quot;Importa da Facebook&quot; e inserisci il tuo token</p>
           </CardContent>
         </Card>
       ) : (
@@ -203,10 +216,7 @@ export default function AccountsPage() {
                       </div>
                     </div>
                   )}
-                  <div className="flex gap-2 pt-2">
-                    <Button variant="outline" size="sm" onClick={() => handleSyncPixelsPages(acc)}>
-                      <RefreshCw size={14} /> Sync Pixel/Pagine
-                    </Button>
+                  <div className="flex gap-2 pt-2 justify-end">
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(acc.id)}>
                       <Trash2 size={14} className="text-red-500" />
                     </Button>
