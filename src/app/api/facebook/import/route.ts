@@ -29,6 +29,9 @@ export async function POST(request: NextRequest) {
     const { accessToken } = await request.json()
     if (!accessToken) return NextResponse.json({ error: "Token mancante" }, { status: 400 })
 
+    const results = { accounts: 0, pixels: 0, pages: 0, errors: [] as string[] }
+
+    // 1. Fetch ad accounts
     let adAccounts: any[] = []
     try {
       const meData = await fbGet("/me/adaccounts", accessToken, {
@@ -38,18 +41,16 @@ export async function POST(request: NextRequest) {
       adAccounts = meData.data || []
     } catch (e) {
       return NextResponse.json({
-        error: `Errore Facebook: ${e instanceof Error ? e.message : "Token non valido o permessi insufficienti"}`,
+        error: `Errore Facebook: ${e instanceof Error ? e.message : "Token non valido"}`,
       }, { status: 400 })
     }
 
     if (adAccounts.length === 0) {
-      return NextResponse.json({
-        error: "Nessun account pubblicitario trovato con questo token",
-      }, { status: 400 })
+      return NextResponse.json({ error: "Nessun account pubblicitario trovato" }, { status: 400 })
     }
 
-    const results = { accounts: 0, pixels: 0, pages: 0, errors: [] as string[] }
-
+    // 2. Save ad accounts
+    const accountMap: Record<string, string> = {} // fb account_id -> db uuid
     for (const acc of adAccounts) {
       try {
         const { data: existing } = await serviceClient
@@ -58,19 +59,17 @@ export async function POST(request: NextRequest) {
           .eq("account_id", acc.id)
           .maybeSingle()
 
-        let dbAccountId: string
-
         if (existing) {
-          dbAccountId = existing.id
+          accountMap[acc.id] = existing.id
           await serviceClient.from("fb_ad_accounts").update({
             name: acc.name,
             access_token: accessToken,
             currency: acc.currency || "EUR",
             timezone: acc.timezone_name || "Europe/Rome",
             status: acc.account_status === 1 ? "active" : "paused",
-          }).eq("id", dbAccountId)
+          }).eq("id", existing.id)
         } else {
-          const { data: inserted, error: insertErr } = await serviceClient.from("fb_ad_accounts").insert({
+          const { data: inserted } = await serviceClient.from("fb_ad_accounts").insert({
             account_id: acc.id,
             name: acc.name,
             access_token: accessToken,
@@ -78,48 +77,54 @@ export async function POST(request: NextRequest) {
             timezone: acc.timezone_name || "Europe/Rome",
             status: acc.account_status === 1 ? "active" : "paused",
           }).select("id").single()
-
-          if (insertErr || !inserted) {
-            results.errors.push(`Account ${acc.name}: ${insertErr?.message || "insert failed"}`)
-            continue
-          }
-          dbAccountId = inserted.id
+          if (inserted) accountMap[acc.id] = inserted.id
         }
         results.accounts++
-
-        try {
-          const pixelData = await fbGet(`/${acc.id}/adspixels`, accessToken, { fields: "id,name" })
-          for (const px of pixelData.data || []) {
-            await serviceClient.from("fb_pixels").upsert({
-              pixel_id: px.id,
-              name: px.name,
-              fb_ad_account_id: dbAccountId,
-            }, { onConflict: "pixel_id" })
-            results.pixels++
-          }
-        } catch { /* pixel fetch can fail silently */ }
-
-        try {
-          const pageData = await fbGet("/me/accounts", accessToken, { fields: "id,name,access_token" })
-          for (const pg of pageData.data || []) {
-            await serviceClient.from("fb_pages").upsert({
-              page_id: pg.id,
-              name: pg.name,
-              access_token: pg.access_token,
-              fb_ad_account_id: dbAccountId,
-            }, { onConflict: "page_id" })
-            results.pages++
-          }
-        } catch { /* page fetch can fail silently */ }
       } catch (e) {
-        results.errors.push(`${acc.name}: ${e instanceof Error ? e.message : "error"}`)
+        results.errors.push(`Account ${acc.name}: ${e instanceof Error ? e.message : "error"}`)
       }
+    }
+
+    // 3. Fetch pixels per account (each account has its own pixels)
+    for (const acc of adAccounts) {
+      const dbId = accountMap[acc.id]
+      if (!dbId) continue
+      try {
+        const pixelData = await fbGet(`/${acc.id}/adspixels`, accessToken, { fields: "id,name" })
+        for (const px of pixelData.data || []) {
+          await serviceClient.from("fb_pixels").upsert({
+            pixel_id: px.id,
+            name: px.name,
+            fb_ad_account_id: dbId,
+          }, { onConflict: "pixel_id" })
+          results.pixels++
+        }
+      } catch { /* some accounts may not have pixel access */ }
+    }
+
+    // 4. Fetch pages (global, linked to first account as reference)
+    try {
+      const pageData = await fbGet("/me/accounts", accessToken, {
+        fields: "id,name,access_token",
+        limit: "100",
+      })
+      for (const pg of pageData.data || []) {
+        await serviceClient.from("fb_pages").upsert({
+          page_id: pg.id,
+          name: pg.name,
+          access_token: pg.access_token || null,
+          fb_ad_account_id: null,
+        }, { onConflict: "page_id" })
+        results.pages++
+      }
+    } catch (e) {
+      results.errors.push(`Pagine: ${e instanceof Error ? e.message : "error"}`)
     }
 
     return NextResponse.json({ success: true, results })
   } catch (error) {
     return NextResponse.json({
-      error: error instanceof Error ? error.message : "Errore interno del server",
+      error: error instanceof Error ? error.message : "Errore interno",
     }, { status: 500 })
   }
 }
