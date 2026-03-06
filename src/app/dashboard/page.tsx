@@ -1,10 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useAppStore } from "@/lib/store"
 import { StatCard } from "@/components/stat-card"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { formatCurrency, formatNumber, formatPercent, getStatusBadgeColor } from "@/lib/utils"
 import {
   DollarSign,
@@ -13,6 +15,7 @@ import {
   TrendingUp,
   Target,
   BarChart3,
+  Calendar,
 } from "lucide-react"
 import {
   BarChart,
@@ -27,27 +30,34 @@ import {
 } from "recharts"
 import type { Campaign, CampaignInsight } from "@/types/database"
 
+function daysAgo(n: number) {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return d.toISOString().split("T")[0]
+}
+
 export default function DashboardPage() {
   const { selectedAccountId } = useAppStore()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [insights, setInsights] = useState<CampaignInsight[]>([])
   const [loading, setLoading] = useState(true)
+  const [dateFrom, setDateFrom] = useState(() => daysAgo(7))
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split("T")[0])
+  const [dateLabel, setDateLabel] = useState("7g")
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
-      const accParam = selectedAccountId ? `&accountId=${selectedAccountId}` : ""
-      const [campRes, insightRes] = await Promise.all([
-        fetch(`/api/user/resources?type=campaigns${accParam}`).then(r => r.json()),
-        fetch(`/api/user/resources?type=insights${accParam}`).then(r => r.json()),
-      ])
-      setCampaigns((campRes.data || []) as Campaign[])
-      setInsights((insightRes.data || []) as CampaignInsight[])
-      setLoading(false)
-    }
+  const load = useCallback(async () => {
+    setLoading(true)
+    const accParam = selectedAccountId ? `&accountId=${selectedAccountId}` : ""
+    const [campRes, insightRes] = await Promise.all([
+      fetch(`/api/user/resources?type=campaigns${accParam}`).then(r => r.json()),
+      fetch(`/api/user/resources?type=insights${accParam}&from=${dateFrom}&to=${dateTo}`).then(r => r.json()),
+    ])
+    setCampaigns((campRes.data || []) as Campaign[])
+    setInsights((insightRes.data || []) as CampaignInsight[])
+    setLoading(false)
+  }, [selectedAccountId, dateFrom, dateTo])
 
-    load()
-  }, [selectedAccountId])
+  useEffect(() => { load() }, [load])
 
   const totals = insights.reduce(
     (acc, i) => ({
@@ -63,7 +73,6 @@ export default function DashboardPage() {
 
   const roas = totals.spend > 0 ? totals.conversionValue / totals.spend : 0
   const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0
-  const cpa = totals.conversions > 0 ? totals.spend / totals.conversions : 0
 
   const dailyData = insights.reduce((acc, i) => {
     const existing = acc.find((d) => d.date === i.date)
@@ -81,6 +90,7 @@ export default function DashboardPage() {
     }
     return acc
   }, [] as { date: string; spend: number; conversions: number; revenue: number }[])
+    .sort((a, b) => a.date.localeCompare(b.date))
 
   const activeCampaigns = campaigns.filter((c) => c.status === "ACTIVE")
 
@@ -94,9 +104,57 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-        <p className="text-gray-500 dark:text-gray-400">Panoramica degli ultimi 7 giorni</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+          <p className="text-gray-500 dark:text-gray-400">
+            Panoramica {dateLabel ? `(${dateLabel})` : `${dateFrom} - ${dateTo}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {[
+              { label: "Oggi", days: 0 },
+              { label: "Ieri", days: 1 },
+              { label: "3g", days: 3 },
+              { label: "7g", days: 7 },
+              { label: "14g", days: 14 },
+              { label: "30g", days: 30 },
+            ].map(({ label, days }) => (
+              <Button
+                key={label}
+                variant={dateLabel === label ? "default" : "outline"}
+                size="sm"
+                className="px-2.5 text-xs h-8"
+                onClick={() => {
+                  const to = days === 1 ? daysAgo(1) : new Date().toISOString().split("T")[0]
+                  const from = days <= 1 ? to : daysAgo(days)
+                  setDateFrom(from)
+                  setDateTo(to)
+                  setDateLabel(label)
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Calendar size={14} className="text-gray-400" />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); setDateLabel("") }}
+              className="w-[130px] h-8 text-xs"
+            />
+            <span className="text-gray-400 text-xs">-</span>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); setDateLabel("") }}
+              className="w-[130px] h-8 text-xs"
+            />
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
