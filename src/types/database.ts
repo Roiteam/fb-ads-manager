@@ -184,3 +184,43 @@ export interface RuleLog {
   error_message: string | null
   created_at: string
 }
+
+export interface TrafficManager {
+  id: string
+  name: string
+  api_base_url: string
+  api_key: string | null
+  api_secret: string | null
+  auth_type: 'api_key' | 'bearer' | 'basic' | 'query_param'
+  auth_param_name: string
+  endpoint_path: string
+  response_mapping: {
+    total_field?: string
+    approved_field?: string
+    rejected_field?: string
+    pending_field?: string
+    revenue_field?: string
+    date_field?: string
+    data_root?: string
+  }
+  extra_params: Record<string, string>
+  is_active: boolean
+  last_synced_at: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TrafficManagerData {
+  id: string
+  traffic_manager_id: string
+  date: string
+  total_conversions: number
+  approved_conversions: number
+  rejected_conversions: number
+  pending_conversions: number
+  approval_rate: number
+  revenue: number
+  raw_data: Record<string, unknown> | null
+  created_at: string
+}

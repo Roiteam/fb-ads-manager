@@ -563,6 +563,51 @@ create trigger update_alert_configs_updated_at before update on public.alert_con
   for each row execute procedure public.update_updated_at();
 
 -- ============================================
+-- TRAFFIC MANAGERS
+-- ============================================
+create table public.traffic_managers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  api_base_url text not null,
+  api_key text,
+  api_secret text,
+  auth_type text not null default 'bearer',
+  auth_param_name text not null default 'Authorization',
+  endpoint_path text not null default '/conversions',
+  response_mapping jsonb default '{}',
+  extra_params jsonb default '{}',
+  is_active boolean default true,
+  last_synced_at timestamptz,
+  created_by uuid references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table public.traffic_manager_data (
+  id uuid primary key default gen_random_uuid(),
+  traffic_manager_id uuid references public.traffic_managers(id) on delete cascade not null,
+  date text not null,
+  total_conversions integer default 0,
+  approved_conversions integer default 0,
+  rejected_conversions integer default 0,
+  pending_conversions integer default 0,
+  approval_rate numeric(5,2) default 0,
+  revenue numeric(12,2) default 0,
+  raw_data jsonb,
+  created_at timestamptz default now(),
+  unique(traffic_manager_id, date)
+);
+
+alter table public.traffic_managers enable row level security;
+alter table public.traffic_manager_data enable row level security;
+
+create policy "Service role full access on traffic_managers" on public.traffic_managers for all using (true);
+create policy "Service role full access on traffic_manager_data" on public.traffic_manager_data for all using (true);
+
+create trigger update_traffic_managers_updated_at before update on public.traffic_managers
+  for each row execute procedure public.update_updated_at();
+
+-- ============================================
 -- INDEXES
 -- ============================================
 create index idx_campaigns_account on public.campaigns(fb_ad_account_id);

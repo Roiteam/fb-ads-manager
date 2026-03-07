@@ -15,7 +15,8 @@ import {
   ChevronRight,
   Target,
   Eye,
-  FileText
+  FileText,
+  ArrowRightLeft,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@/lib/store"
@@ -35,6 +36,7 @@ const mainLinks = [
   { href: "/dashboard/alerts", label: "Alert", icon: Bell },
   { href: "/dashboard/pixels", label: "Pixel", icon: Eye },
   { href: "/dashboard/pages", label: "Pagine", icon: FileText },
+  { href: "/dashboard/traffic-manager", label: "Traffic Manager", icon: ArrowRightLeft },
 ]
 
 export function Sidebar() {
