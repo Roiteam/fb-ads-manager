@@ -305,11 +305,17 @@ export default function TrafficManagerPage() {
                 else if (url.includes("binom")) applyPreset("binom")
               }} placeholder="https://il-tuo-tracker.com" />
             </div>
-            <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">API Key</label>
-              <Input type="password" value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="Incolla qui la tua API key" />
-              <p className="text-xs text-gray-400 mt-1">La trovi nelle impostazioni API del tuo tracker</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">ID Utente</label>
+                <Input value={form.api_secret} onChange={e => setForm({ ...form, api_secret: e.target.value })} placeholder="Il tuo ID utente" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">API Key</label>
+                <Input value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="La tua chiave API" />
+              </div>
             </div>
+            <p className="text-xs text-gray-400">Li trovi nelle impostazioni API del tuo tracker</p>
 
             <div className="flex items-center gap-3 pt-2">
               <Button onClick={handleSave} disabled={saving || !form.name || !form.api_base_url || !form.api_key}>
