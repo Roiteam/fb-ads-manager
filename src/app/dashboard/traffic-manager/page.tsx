@@ -183,8 +183,11 @@ export default function TrafficManagerPage() {
     await load()
   }
 
+  const [syncResult, setSyncResult] = useState<any>(null)
+
   const handleFetch = async (id: string) => {
     setSyncing(id)
+    setSyncResult(null)
     try {
       const res = await fetch("/api/traffic-manager", {
         method: "POST",
@@ -192,8 +195,12 @@ export default function TrafficManagerPage() {
         body: JSON.stringify({ action: "fetch", id, dateFrom, dateTo }),
       })
       const json = await res.json()
-      if (json.error) alert(json.error)
-      else await load()
+      if (json.error) {
+        alert(json.error)
+      } else {
+        setSyncResult(json)
+        await load()
+      }
     } catch { /* ignore */ }
     setSyncing(null)
   }
@@ -390,6 +397,34 @@ export default function TrafficManagerPage() {
               </Card>
             ))}
           </div>
+
+          {syncResult && (
+            <Card className="border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800">
+              <CardContent className="p-4">
+                <p className="font-medium text-blue-700 dark:text-blue-300 mb-2">Risultato Sincronizzazione</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                  <div><span className="text-gray-500">Offerte:</span> <strong>{syncResult.records}</strong></div>
+                  <div><span className="text-gray-500">Totale Leads:</span> <strong>{syncResult.parsed?.totalLeads}</strong></div>
+                  <div><span className="text-gray-500">Approvate:</span> <strong>{syncResult.parsed?.approved}</strong></div>
+                  <div><span className="text-gray-500">Cancellate:</span> <strong>{syncResult.parsed?.totalCanceled}</strong></div>
+                  <div><span className="text-gray-500">In Attesa:</span> <strong>{syncResult.parsed?.totalPending}</strong></div>
+                  <div><span className="text-gray-500">Revenue:</span> <strong>{syncResult.parsed?.totalRevenue}</strong></div>
+                  <div><span className="text-gray-500">Approval Rate:</span> <strong>{syncResult.parsed?.approvalRate}%</strong></div>
+                  {syncResult.upsertError && <div className="col-span-4 text-red-600">DB Error: {syncResult.upsertError}</div>}
+                </div>
+                {syncResult.raw_sample && (
+                  <p className="text-xs text-gray-500 mt-2">Campi primo record: {syncResult.raw_sample.join(", ")}</p>
+                )}
+                {syncResult.raw_first && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-blue-600 cursor-pointer">Vedi primo record raw</summary>
+                    <pre className="text-xs bg-white dark:bg-gray-900 p-2 rounded mt-1 overflow-x-auto max-h-48">{JSON.stringify(syncResult.raw_first, null, 2)}</pre>
+                  </details>
+                )}
+                <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={() => setSyncResult(null)}>Chiudi</Button>
+              </CardContent>
+            </Card>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             <Select value={selectedManager} onValueChange={setSelectedManager}>

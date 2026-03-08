@@ -111,51 +111,65 @@ export async function POST(request: NextRequest) {
         }
 
         const apiData = await res.json()
-        const records = Array.isArray(apiData) ? apiData : [apiData]
 
-        let savedCount = 0
-        let totalLeads = 0
-        let totalApproved = 0
-        let totalRejected = 0
-        let totalPending = 0
-        let totalRevenue = 0
-
-        for (const record of records) {
-          const leads = record.total_leads || record.leads?.length || 0
-          const confirmed = record.confirmed?.total || 0
-          const canceled = record.canceled?.total || 0
-          const pendingConv = record.conversions?.pending?.total || record.to_call_back?.total || 0
-          const approvedConv = record.conversions?.approved?.total || confirmed
-          const confirmPct = record.confirmed?.percent || (record.conversions?.approved?.percent) || 0
-          const rev = record.confirmed?.payout || record.conversions?.approved?.payout || 0
-
-          totalLeads += leads
-          totalApproved += approvedConv || confirmed
-          totalRejected += canceled
-          totalPending += pendingConv
-          totalRevenue += rev
+        let records: any[] = []
+        if (Array.isArray(apiData)) {
+          records = apiData
+        } else if (apiData?.data && Array.isArray(apiData.data)) {
+          records = apiData.data
+        } else if (typeof apiData === "object" && apiData !== null) {
+          records = [apiData]
         }
 
-        const approvalRate = totalLeads > 0
-          ? (totalApproved / totalLeads) * 100
-          : records[0]?.confirmed?.percent || 0
+        let totalLeads = 0
+        let totalConfirmed = 0
+        let totalCanceled = 0
+        let totalPending = 0
+        let totalRevenue = 0
+        let totalApprovedConv = 0
 
-        await serviceClient.from("traffic_manager_data").upsert({
+        const num = (v: any) => Number(v) || 0
+
+        for (const r of records) {
+          totalLeads += num(r.total_leads) || num(r.total_with_trash) || num(r.total) || 0
+          totalConfirmed += num(r.confirmed?.total)
+          totalCanceled += num(r.canceled?.total)
+          totalPending += num(r.to_call_back?.total) + num(r.conversions?.pending?.total)
+          totalApprovedConv += num(r.conversions?.approved?.total)
+          totalRevenue += num(r.confirmed?.payout) + num(r.conversions?.approved?.payout)
+        }
+
+        const approved = totalApprovedConv > 0 ? totalApprovedConv : totalConfirmed
+        const approvalRate = totalLeads > 0
+          ? (approved / totalLeads) * 100
+          : (records[0]?.confirmed?.percent || records[0]?.conversions?.approved?.percent || 0)
+
+        const upsertData = {
           traffic_manager_id: manager.id,
           date: dateTo,
           total_conversions: totalLeads,
-          approved_conversions: totalApproved,
-          rejected_conversions: totalRejected,
+          approved_conversions: approved,
+          rejected_conversions: totalCanceled,
           pending_conversions: totalPending,
           approval_rate: Math.round(approvalRate * 100) / 100,
           revenue: totalRevenue,
           raw_data: apiData,
-        }, { onConflict: "traffic_manager_id,date" })
-        savedCount = 1
+        }
+
+        const { error: upsertError } = await serviceClient.from("traffic_manager_data").upsert(
+          upsertData, { onConflict: "traffic_manager_id,date" }
+        )
 
         await serviceClient.from("traffic_managers").update({ last_synced_at: new Date().toISOString() }).eq("id", manager.id)
 
-        return NextResponse.json({ success: true, records: savedCount, raw: apiData })
+        return NextResponse.json({
+          success: true,
+          records: records.length,
+          parsed: { totalLeads, approved, totalCanceled, totalPending, totalRevenue, approvalRate: Math.round(approvalRate * 100) / 100 },
+          upsertError: upsertError?.message || null,
+          raw_sample: records.length > 0 ? Object.keys(records[0]) : [],
+          raw_first: records.length > 0 ? records[0] : null,
+        })
       } catch (e) {
         return NextResponse.json({
           error: `Connessione fallita: ${e instanceof Error ? e.message : "errore"}`,
