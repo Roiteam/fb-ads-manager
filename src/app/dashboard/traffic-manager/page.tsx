@@ -287,57 +287,38 @@ export default function TrafficManagerPage() {
         <Card>
           <CardHeader>
             <CardTitle>{form.id ? "Modifica" : "Collega"} Traffic Manager</CardTitle>
+            <p className="text-sm text-gray-500">Inserisci nome, URL e API Key del tuo tracker per ricevere i dati di conversione</p>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">Piattaforma</label>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                {[
-                  { value: "keitaro", label: "Keitaro" },
-                  { value: "binom", label: "Binom" },
-                  { value: "voluum", label: "Voluum" },
-                  { value: "redtrack", label: "RedTrack" },
-                  { value: "custom", label: "Altro" },
-                ].map(({ value, label }) => (
-                  <button
-                    key={value}
-                    onClick={() => applyPreset(value)}
-                    className={`px-4 py-3 rounded-lg border-2 text-sm font-semibold transition-all ${form.preset === value ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" : "border-gray-200 dark:border-gray-700 hover:border-gray-300 text-gray-600 dark:text-gray-400"}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Nome</label>
+              <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Es. Tracker principale" />
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Nome</label>
-                <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Es. Il mio Keitaro" />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">URL del tracker</label>
-                <Input value={form.api_base_url} onChange={e => setForm({ ...form, api_base_url: e.target.value })} placeholder={form.preset === "voluum" ? "https://api.voluum.com" : form.preset === "redtrack" ? "https://api.redtrack.io" : "https://il-tuo-tracker.com"} />
-                <p className="text-xs text-gray-400 mt-1">{form.preset === "keitaro" ? "Es. https://il-tuo-dominio.com" : form.preset === "binom" ? "Es. https://il-tuo-binom.com" : "L'indirizzo del tuo tracker"}</p>
-              </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">URL del tracker</label>
+              <Input value={form.api_base_url} onChange={e => {
+                setForm({ ...form, api_base_url: e.target.value })
+                const url = e.target.value.toLowerCase()
+                if (url.includes("voluum")) applyPreset("voluum")
+                else if (url.includes("redtrack")) applyPreset("redtrack")
+                else if (url.includes("keitaro") || url.includes("click.php")) applyPreset("keitaro")
+                else if (url.includes("binom")) applyPreset("binom")
+              }} placeholder="https://il-tuo-tracker.com" />
             </div>
-
             <div>
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">API Key</label>
               <Input type="password" value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="Incolla qui la tua API key" />
-              <p className="text-xs text-gray-400 mt-1">
-                {form.preset === "keitaro" ? "La trovi in Keitaro → Impostazioni → API" : form.preset === "binom" ? "La trovi in Binom → Settings → API" : form.preset === "voluum" ? "La trovi in Voluum → Settings → Security → API access tokens" : form.preset === "redtrack" ? "La trovi in RedTrack → Tools → API" : "Controlla le impostazioni del tuo tracker"}
-              </p>
+              <p className="text-xs text-gray-400 mt-1">La trovi nelle impostazioni API del tuo tracker</p>
             </div>
 
             <div className="flex items-center gap-3 pt-2">
-              <Button variant="outline" onClick={handleTest} disabled={testing || !form.api_base_url || !form.api_key}>
-                <TestTube size={16} />
-                {testing ? "Testing..." : "Testa Connessione"}
-              </Button>
               <Button onClick={handleSave} disabled={saving || !form.name || !form.api_base_url || !form.api_key}>
                 <Save size={16} />
                 {saving ? "Salvataggio..." : "Salva"}
+              </Button>
+              <Button variant="outline" onClick={handleTest} disabled={testing || !form.api_base_url || !form.api_key}>
+                <TestTube size={16} />
+                {testing ? "Testing..." : "Testa"}
               </Button>
               <Button variant="ghost" onClick={resetForm}>Annulla</Button>
             </div>
