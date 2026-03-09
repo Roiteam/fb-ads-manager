@@ -85,20 +85,9 @@ export default function TrafficManagerPage() {
 
   useEffect(() => { load() }, [load])
 
-  const [autoSynced, setAutoSynced] = useState("")
-  useEffect(() => {
-    const key = `${dateFrom}_${dateTo}`
-    if (managers.length > 0 && autoSynced !== key && !syncing) {
-      setAutoSynced(key)
-      syncAll(dateFrom, dateTo)
-    }
-  }, [dateFrom, dateTo, managers, autoSynced, syncing, syncAll])
-
   useEffect(() => {
     if (managers.length === 0) return
-    const interval = setInterval(() => {
-      syncAll()
-    }, 60 * 60 * 1000)
+    const interval = setInterval(() => { syncAll() }, 60 * 60 * 1000)
     return () => clearInterval(interval)
   }, [managers, syncAll])
 
@@ -423,8 +412,8 @@ export default function TrafficManagerPage() {
                       disabled={syncing === m.id}
                       onClick={() => handleFetch(m.id)}
                     >
-                      <RefreshCw size={12} className={syncing === m.id ? "animate-spin" : ""} />
-                      {syncing === m.id ? "Sync..." : "Sincronizza"}
+                      <RefreshCw size={12} className={syncing === m.id || syncing === "all" ? "animate-spin" : ""} />
+                      {syncing === m.id || syncing === "all" ? "Sync..." : "Sincronizza"}
                     </Button>
                   </div>
                 </CardContent>
@@ -489,11 +478,13 @@ export default function TrafficManagerPage() {
                   variant={dateLabel === label ? "default" : "outline"}
                   size="sm"
                   className="px-2.5 text-xs h-8"
+                  disabled={syncing === "all"}
                   onClick={() => {
                     const { from, to } = getRange()
                     setDateFrom(from)
                     setDateTo(to)
                     setDateLabel(label)
+                    syncAll(from, to)
                   }}
                 >
                   {label}
