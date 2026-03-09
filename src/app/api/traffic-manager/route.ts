@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
           const doubles = safeNum(l.double ?? r.double)
           const trash = safeNum(l.trash ?? r.trash)
 
-          const effectiveLeads = leads > 0 ? leads : (confirmed + canceled + pendingConv + doubles + trash)
+          const effectiveLeads = confirmed + canceled + pendingConv + doubles + trash
 
           totalLeads += effectiveLeads
           totalConfirmed += confirmed
