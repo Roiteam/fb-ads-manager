@@ -149,6 +149,106 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    if (action === "sync_traffic_manager") {
+      const { data: managers } = await serviceClient.from("traffic_managers").select("*")
+      if (!managers || managers.length === 0) return NextResponse.json({ success: false, message: "Nessun Traffic Manager collegato" })
+
+      const today = new Date().toISOString().split("T")[0]
+      const monthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`
+      const results: string[] = []
+
+      for (const m of managers) {
+        try {
+          const base = (m.api_base_url || "").replace(/\/$/, "")
+          const apiUrl = `${base}/approvalRate/${monthStart}/${today}`
+          const headers: Record<string, string> = { "Accept": "application/json" }
+          if (m.api_key) headers["x-api-key"] = m.api_key
+          if (m.api_secret) headers["x-user-id"] = m.api_secret
+
+          const res = await fetch(apiUrl, { headers })
+          if (res.ok) {
+            const apiData = await res.json()
+            const records = Array.isArray(apiData) ? apiData : apiData?.data || [apiData]
+            const safeNum = (v: any) => { const n = Number(v); return isNaN(n) ? 0 : n }
+            let totalLeads = 0, totalConfirmed = 0, totalCanceled = 0, totalPending = 0, totalApproved = 0, totalRevenue = 0
+
+            for (const r of records) {
+              const l = r.leads || {}
+              const c = r.conversions || {}
+              const conf = safeNum(l.confirmed?.total)
+              const canc = safeNum(l.canceled?.total)
+              const pend = safeNum(c.pending?.total ?? l.to_call_back?.total)
+              const appr = safeNum(c.approved?.total)
+              const doub = safeNum(l.double)
+              const trash = safeNum(l.trash)
+              totalLeads += conf + canc + pend + doub + trash
+              totalConfirmed += conf
+              totalCanceled += canc
+              totalPending += pend
+              totalApproved += appr
+              totalRevenue += safeNum(l.confirmed?.payout) + safeNum(c.approved?.payout)
+            }
+
+            await serviceClient.from("traffic_manager_data").delete().eq("traffic_manager_id", m.id)
+            await serviceClient.from("traffic_manager_data").insert({
+              traffic_manager_id: m.id,
+              date: today,
+              total_conversions: totalLeads,
+              approved_conversions: totalApproved > 0 ? totalApproved : totalConfirmed,
+              rejected_conversions: totalCanceled,
+              pending_conversions: totalPending,
+              approval_rate: totalLeads > 0 ? Math.round(((totalApproved > 0 ? totalApproved : totalConfirmed) / totalLeads) * 10000) / 100 : 0,
+              revenue: totalRevenue,
+              raw_data: apiData,
+            })
+            await serviceClient.from("traffic_managers").update({ last_synced_at: new Date().toISOString() }).eq("id", m.id)
+            results.push(`"${m.name}": ${totalLeads} lead, ${totalConfirmed} confermate, approval ${totalLeads > 0 ? Math.round(((totalApproved > 0 ? totalApproved : totalConfirmed) / totalLeads) * 100) : 0}%`)
+          } else {
+            results.push(`"${m.name}": errore API ${res.status}`)
+          }
+        } catch (e) {
+          results.push(`"${m.name}": errore connessione`)
+        }
+      }
+
+      return NextResponse.json({ success: true, message: `Traffic Manager sincronizzato:\n${results.join("\n")}` })
+    }
+
+    if (action === "search_offers" || action === "fetch_offers") {
+      const { data: managers } = await serviceClient.from("traffic_managers").select("*")
+      if (!managers || managers.length === 0) return NextResponse.json({ success: false, message: "Nessun Traffic Manager collegato" })
+
+      const allOffers: any[] = []
+      for (const m of managers) {
+        if (!m.api_base_url || !m.api_key) continue
+        try {
+          const base = (m.api_base_url || "").replace(/\/$/, "")
+          const headers: Record<string, string> = { "Accept": "application/json" }
+          if (m.api_key) headers["x-api-key"] = m.api_key
+          if (m.api_secret) headers["x-user-id"] = m.api_secret
+          const res = await fetch(`${base}/offers`, { headers })
+          if (res.ok) {
+            const data = await res.json()
+            const offers = Array.isArray(data) ? data : data?.data || data?.offers || []
+            for (const o of offers) {
+              allOffers.push({
+                tm: m.name,
+                id: o.id || o.offer_id,
+                nome: o.name || o.offer_name,
+                stato: o.status,
+                paese: o.country || o.geo || o.countries,
+                payout: o.payout,
+                verticale: o.vertical || o.category,
+              })
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      if (allOffers.length === 0) return NextResponse.json({ success: true, message: "Nessuna offerta trovata dai Traffic Manager collegati", offers: [] })
+      return NextResponse.json({ success: true, message: `Trovate ${allOffers.length} offerte dal network`, offers: allOffers })
+    }
+
     return NextResponse.json({ success: false, message: `Azione "${action}" non supportata` })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Error" }, { status: 500 })

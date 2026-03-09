@@ -456,6 +456,7 @@ export default function AgentPage() {
       const adsActions = [
         "pause_campaign", "activate_campaign", "pause_multiple", "activate_multiple",
         "update_budget", "sync_campaigns", "get_campaign_details",
+        "sync_traffic_manager", "search_offers", "fetch_offers",
       ]
       const funnelActions = [
         "create_landing", "create_video_ads", "create_retargeting",
@@ -482,6 +483,9 @@ export default function AgentPage() {
           update_budget: `Budget → €${extractedData.budget || "?"}`,
           sync_campaigns: "Sincronizza",
           get_campaign_details: "Dettagli Campagna",
+          sync_traffic_manager: "Sincronizza Traffic Manager",
+          search_offers: "Cerca Offerte Network",
+          fetch_offers: "Carica Offerte Network",
           create_landing: `Crea Landing Page "${extractedData.nome || ""}"`,
           create_video_ads: `Crea Video Ads "${extractedData.nome || ""}"`,
           create_retargeting: `Crea Retargeting "${extractedData.nome || ""}"`,
@@ -515,7 +519,7 @@ export default function AgentPage() {
   }
 
   const handleQuickAction = async (value: string, params?: any) => {
-    const adsActions = ["pause_campaign", "activate_campaign", "pause_multiple", "activate_multiple", "update_budget", "sync_campaigns", "get_campaign_details"]
+    const adsActions = ["pause_campaign", "activate_campaign", "pause_multiple", "activate_multiple", "update_budget", "sync_campaigns", "get_campaign_details", "sync_traffic_manager", "search_offers", "fetch_offers"]
     const funnelActions = ["create_landing", "create_video_ads", "create_retargeting", "create_funnel", "translate_landing"]
 
     if (adsActions.includes(value) && params) {

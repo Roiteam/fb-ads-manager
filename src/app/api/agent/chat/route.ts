@@ -26,9 +26,16 @@ AZIONI CHE PUOI ESEGUIRE (campo "suggestedAction"):
 - "update_budget" — Cambia budget (extractedData.campaignName + extractedData.budget in EUR)
 - "get_campaign_details" — Dettagli campagna (extractedData.campaignName)
 
-**Traffic Manager:**
-- "sync_traffic_manager" — Sincronizza dati approval rate
-- "search_offers" — Cerca offerte disponibili
+**Traffic Manager (Offersify / Network):**
+- "sync_traffic_manager" — Sincronizza dati approval rate dal network
+- "search_offers" — Cerca e mostra offerte disponibili nel catalogo del network (NON le campagne Facebook!)
+
+IMPORTANTE — DISTINZIONE TRA CAMPAGNE E OFFERTE:
+- "Campagne" = campagne Facebook Ads (campo "campaigns" nei dati)
+- "Offerte" / "Offers" = offerte del network/Offersify (campo "offerteCatalogoNetwork" e "offerteNetwork" nei dati)
+- Quando l'utente chiede "offerte" intende SEMPRE le offerte del network, MAI le campagne Facebook
+- "offerteNetwork" = dati approval rate per offerta (confermate, cancellate, payout, ecc.)
+- "offerteCatalogoNetwork" = catalogo offerte disponibili (nome, paese, payout, verticale, stato)
 
 **Funnel Builder:**
 - "create_landing" — Genera landing page (extractedData = dati prodotto)
@@ -146,46 +153,96 @@ async function getToolContext(serviceClient: any, userId: string, isAdmin: boole
     }
   }
 
-  const { data: tmManagers } = await serviceClient.from("traffic_managers").select("id,name,api_base_url,last_synced_at")
+  const { data: tmManagers } = await serviceClient.from("traffic_managers").select("*")
   const { data: tmData } = await serviceClient.from("traffic_manager_data").select("*").order("date", { ascending: false }).limit(50)
-  if (tmData && tmData.length > 0) {
-    const tmTotals = tmData.reduce((acc: any, d: any) => ({
-      total: acc.total + d.total_conversions,
-      approved: acc.approved + d.approved_conversions,
-      rejected: acc.rejected + d.rejected_conversions,
-      pending: acc.pending + d.pending_conversions,
-      revenue: acc.revenue + Number(d.revenue),
-    }), { total: 0, approved: 0, rejected: 0, pending: 0, revenue: 0 })
 
+  if (tmManagers && tmManagers.length > 0) {
     ctx.trafficManager = {
-      managers: (tmManagers || []).map((m: any) => ({ name: m.name, url: m.api_base_url, lastSync: m.last_synced_at })),
-      totali: {
+      managers: tmManagers.map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        url: m.api_base_url,
+        lastSync: m.last_synced_at,
+      })),
+    }
+
+    if (tmData && tmData.length > 0) {
+      const tmTotals = tmData.reduce((acc: any, d: any) => ({
+        total: acc.total + d.total_conversions,
+        approved: acc.approved + d.approved_conversions,
+        rejected: acc.rejected + d.rejected_conversions,
+        pending: acc.pending + d.pending_conversions,
+        revenue: acc.revenue + Number(d.revenue),
+      }), { total: 0, approved: 0, rejected: 0, pending: 0, revenue: 0 })
+
+      ctx.trafficManager.approvalRate = {
         lead: tmTotals.total,
         approvate: tmTotals.approved,
         rifiutate: tmTotals.rejected,
         inAttesa: tmTotals.pending,
-        approvalRate: tmTotals.total > 0 ? Math.round((tmTotals.approved / tmTotals.total) * 10000) / 100 : 0,
+        percentuale: tmTotals.total > 0 ? Math.round((tmTotals.approved / tmTotals.total) * 10000) / 100 : 0,
         revenue: Math.round(tmTotals.revenue * 100) / 100,
-      },
-    }
+      }
 
-    for (const d of tmData) {
-      if (d.raw_data) {
-        const raw = d.raw_data as any
-        const offers = Array.isArray(raw) ? raw : raw?.data || []
-        if (offers.length > 0) {
-          ctx.dettaglioOfferte = offers.slice(0, 15).map((o: any) => ({
-            id: o.offer_id,
-            nome: o.offer_name,
-            confermate: o.leads?.confirmed?.total ?? 0,
-            cancellate: o.leads?.canceled?.total ?? 0,
-            pending: o.conversions?.pending?.total ?? 0,
-            approvate: o.conversions?.approved?.total ?? 0,
-            doppie: o.leads?.double ?? 0,
-          }))
-          break
+      const allOffers: any[] = []
+      for (const d of tmData) {
+        if (d.raw_data) {
+          const raw = d.raw_data as any
+          const offers = Array.isArray(raw) ? raw : raw?.data || []
+          for (const o of offers) {
+            const l = o.leads || {}
+            const c = o.conversions || {}
+            allOffers.push({
+              id: o.offer_id,
+              nome: o.offer_name || o.name,
+              confermate: l.confirmed?.total ?? 0,
+              cancellate: l.canceled?.total ?? 0,
+              inAttesa: c.pending?.total ?? l.to_call_back?.total ?? 0,
+              approvate: c.approved?.total ?? 0,
+              doppie: l.double ?? 0,
+              cestino: l.trash ?? 0,
+              payoutConfirmate: l.confirmed?.payout ?? 0,
+              payoutApprovate: c.approved?.payout ?? 0,
+              approvalRate: l.confirmed?.percent ?? c.approved?.percent ?? null,
+            })
+          }
         }
       }
+      if (allOffers.length > 0) {
+        ctx.trafficManager.offerteNetwork = allOffers
+      }
+    }
+
+    // Fetch live offers from each TM API
+    const liveOffers: any[] = []
+    for (const m of tmManagers) {
+      if (!m.api_base_url || !m.api_key) continue
+      try {
+        const base = (m.api_base_url || "").replace(/\/$/, "")
+        const offersUrl = `${base}/offers`
+        const headers: Record<string, string> = { "Accept": "application/json" }
+        if (m.api_key) headers["x-api-key"] = m.api_key
+        if (m.api_secret) headers["x-user-id"] = m.api_secret
+        const res = await fetch(offersUrl, { headers })
+        if (res.ok) {
+          const data = await res.json()
+          const offers = Array.isArray(data) ? data : data?.data || data?.offers || []
+          for (const o of offers) {
+            liveOffers.push({
+              tmName: m.name,
+              id: o.id || o.offer_id,
+              nome: o.name || o.offer_name,
+              stato: o.status === "active" || o.status === "1" || o.active ? "attiva" : o.status || "sconosciuto",
+              paese: o.country || o.geo || o.countries,
+              payout: o.payout,
+              verticale: o.vertical || o.category,
+            })
+          }
+        }
+      } catch { /* skip */ }
+    }
+    if (liveOffers.length > 0) {
+      ctx.offerteCatalogoNetwork = liveOffers
     }
   }
 
