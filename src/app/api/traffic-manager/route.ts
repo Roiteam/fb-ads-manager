@@ -136,16 +136,21 @@ export async function POST(request: NextRequest) {
         }
 
         for (const r of records) {
-          const leads = safeNum(r.total_leads ?? r.total_with_trash ?? r.total)
-          const confirmed = safeNum(r.confirmed?.total)
-          const canceled = safeNum(r.canceled?.total)
-          const toCallback = safeNum(r.to_call_back?.total)
-          const pendingConv = safeNum(r.conversions?.pending?.total)
-          const approvedConv = safeNum(r.conversions?.approved?.total)
-          const confirmedPayout = safeNum(r.confirmed?.payout)
-          const approvedPayout = safeNum(r.conversions?.approved?.payout)
+          const l = r.leads || {}
+          const c = r.conversions || {}
 
-          const effectiveLeads = leads > 0 ? leads : (confirmed + canceled + toCallback + safeNum(r.double) + safeNum(r.trash))
+          const leads = safeNum(l.total_leads ?? l.total_with_trash ?? r.total_leads ?? r.total)
+          const confirmed = safeNum(l.confirmed?.total ?? r.confirmed?.total)
+          const canceled = safeNum(l.canceled?.total ?? r.canceled?.total)
+          const toCallback = safeNum(l.to_call_back?.total ?? r.to_call_back?.total)
+          const pendingConv = safeNum(c.pending?.total)
+          const approvedConv = safeNum(c.approved?.total)
+          const confirmedPayout = safeNum(l.confirmed?.payout ?? r.confirmed?.payout)
+          const approvedPayout = safeNum(c.approved?.payout)
+          const doubles = safeNum(l.double ?? r.double)
+          const trash = safeNum(l.trash ?? r.trash)
+
+          const effectiveLeads = leads > 0 ? leads : (confirmed + canceled + toCallback + doubles + trash)
 
           totalLeads += effectiveLeads
           totalConfirmed += confirmed
@@ -153,14 +158,14 @@ export async function POST(request: NextRequest) {
           totalPending += toCallback + pendingConv
           totalApprovedConv += approvedConv
           totalRevenue += confirmedPayout + approvedPayout
-          totalDouble += safeNum(r.double)
-          totalTrash += safeNum(r.trash)
+          totalDouble += doubles
+          totalTrash += trash
         }
 
         const approved = totalApprovedConv > 0 ? totalApprovedConv : totalConfirmed
         const approvalRate = totalLeads > 0
           ? (approved / totalLeads) * 100
-          : safeNum(records[0]?.confirmed?.percent ?? records[0]?.conversions?.approved?.percent)
+          : safeNum(records[0]?.leads?.confirmed?.percent ?? records[0]?.conversions?.approved?.percent)
 
         const upsertData = {
           traffic_manager_id: manager.id,
