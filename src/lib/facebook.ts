@@ -219,17 +219,23 @@ export async function createAdSet(
 export function parseActions(actions: Array<{ action_type: string; value: string }> | null | undefined) {
   if (!actions) return { conversions: 0 }
 
-  const purchaseActions = ['offsite_conversion.fb_pixel_purchase', 'purchase', 'omni_purchase']
-  const leadActions = ['offsite_conversion.fb_pixel_lead', 'lead', 'omni_complete_registration']
-  const conversionActions = [...purchaseActions, ...leadActions]
+  const pixelPurchase = ['offsite_conversion.fb_pixel_purchase']
+  const pixelLead = ['offsite_conversion.fb_pixel_lead']
+  const genericPurchase = ['purchase', 'omni_purchase']
+  const genericLead = ['lead', 'omni_complete_registration']
 
-  let conversions = 0
+  let pixelConversions = 0
+  let genericConversions = 0
+
   for (const action of actions) {
-    if (conversionActions.includes(action.action_type)) {
-      conversions += parseInt(action.value, 10)
+    if (pixelPurchase.includes(action.action_type) || pixelLead.includes(action.action_type)) {
+      pixelConversions += parseInt(action.value, 10)
+    } else if (genericPurchase.includes(action.action_type) || genericLead.includes(action.action_type)) {
+      genericConversions += parseInt(action.value, 10)
     }
   }
-  return { conversions }
+
+  return { conversions: pixelConversions > 0 ? pixelConversions : genericConversions }
 }
 
 export function parseActionValues(actionValues: Array<{ action_type: string; value: string }> | null | undefined) {
