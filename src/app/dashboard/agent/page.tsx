@@ -15,6 +15,7 @@ interface ChatMessage {
   content: string
   time: string
   actions?: { label: string; value: string; params?: any }[]
+  offers?: any[]
 }
 
 const QUICK_ACTIONS = [
@@ -183,7 +184,7 @@ export default function AgentPage() {
     } catch { return toolContext }
   }
 
-  const executeAction = async (action: string, params: any): Promise<string> => {
+  const executeAction = async (action: string, params: any): Promise<{ message: string; type?: string; offers?: any[] }> => {
     try {
       const res = await fetch("/api/agent/execute", {
         method: "POST",
@@ -192,8 +193,12 @@ export default function AgentPage() {
       })
       const result = await res.json()
       if (result.success) await refreshContext()
-      return result.message || result.error || "Azione completata"
-    } catch { return "Errore nell'esecuzione" }
+      return {
+        message: result.message || result.error || "Azione completata",
+        type: result.type,
+        offers: result.offers,
+      }
+    } catch { return { message: "Errore nell'esecuzione" } }
   }
 
   const callEdgeFunction = async (action: string, data: any) => {
@@ -470,7 +475,7 @@ export default function AgentPage() {
       if (shouldExecute && actionName && adsActions.includes(actionName)) {
         addMessage({ role: "system", content: `Esecuzione: ${actionName}...`, time: formatTime() })
         const actionResult = await executeAction(actionName, extractedData)
-        addMessage({ role: "agent", content: actionResult, time: formatTime() })
+        addMessage({ role: "agent", content: actionResult.message, time: formatTime(), offers: actionResult.offers })
       } else if (shouldExecute && actionName && funnelActions.includes(actionName)) {
         const funnelResult = await executeFunnelAction(actionName, extractedData)
         addMessage({ role: "agent", content: funnelResult, time: formatTime() })
@@ -526,7 +531,7 @@ export default function AgentPage() {
       setIsProcessing(true)
       addMessage({ role: "system", content: `Esecuzione: ${value}...`, time: formatTime() })
       const result = await executeAction(value, params)
-      addMessage({ role: "agent", content: result, time: formatTime() })
+      addMessage({ role: "agent", content: result.message, time: formatTime(), offers: result.offers })
       setIsProcessing(false)
       return
     }
@@ -606,6 +611,33 @@ export default function AgentPage() {
             <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${msg.role === "user" ? "bg-[#2b5278] text-white rounded-br-md" : msg.role === "system" ? "bg-yellow-500/10 text-yellow-300 text-center max-w-[90%] rounded-lg text-xs border border-yellow-500/20" : "bg-[#182533] text-gray-100 rounded-bl-md"}`}
               dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
             <span className={`text-[11px] text-gray-500 mt-1 ${msg.role === "user" ? "text-right" : "text-left"}`}>{msg.time}</span>
+            {msg.offers && msg.offers.length > 0 && (
+              <div className="mt-3 w-full max-w-[90vw] md:max-w-[600px]">
+                <div className="max-h-[400px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {msg.offers.map((o: any, j: number) => {
+                    const isActive = o.stato === "active" || o.stato === "1" || o.stato === 1
+                    return (
+                      <div key={j} className="bg-[#1e2d3d] rounded-lg p-3 border border-white/5 hover:border-purple-500/30 transition-colors cursor-pointer"
+                        onClick={() => { setInput(`Parlami dell'offerta #${o.id} ${o.nome}`); }}>
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold text-white">{o.paese || "?"} - {o.nome || "—"}</p>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${isActive ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"}`}>
+                            {isActive ? "Attiva" : o.stato || "?"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-400">
+                          <span>ID: {o.id}</span>
+                          <span className="text-green-400">€{o.payout || "?"}</span>
+                          <span className="text-purple-300">{o.verticale || "—"}</span>
+                          <span>{o.paese || "—"}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="text-[10px] text-gray-500 mt-2">Clicca su un&apos;offerta per saperne di più</p>
+              </div>
+            )}
             {msg.actions && msg.actions.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-2">
                 {msg.actions.map((action, j) => (
