@@ -515,11 +515,11 @@ export default function TrafficManagerPage() {
                 </Card>
               </div>
 
-              <Tabs defaultValue="trend">
+              <Tabs defaultValue="table">
                 <TabsList>
+                  <TabsTrigger value="table">Dettaglio Offerte</TabsTrigger>
                   <TabsTrigger value="trend">Trend</TabsTrigger>
                   <TabsTrigger value="distribution">Distribuzione</TabsTrigger>
-                  <TabsTrigger value="table">Tabella</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="trend" className="space-y-6">
@@ -584,36 +584,83 @@ export default function TrafficManagerPage() {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b bg-gray-50 dark:bg-gray-800/50">
-                              <th className="text-left py-3 px-4 font-medium text-gray-500">Data</th>
+                              <th className="text-left py-3 px-4 font-medium text-gray-500">Offerta</th>
                               {selectedManager === "all" && <th className="text-left py-3 px-4 font-medium text-gray-500">TM</th>}
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">Delivery Rate</th>
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">Re Call</th>
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">Confermate</th>
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">Cancellate</th>
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">Doppie</th>
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">Cestino</th>
                               <th className="text-right py-3 px-4 font-medium text-gray-500">Totale</th>
+                              <th className="text-right py-3 px-4 font-medium text-gray-500">On Hold</th>
                               <th className="text-right py-3 px-4 font-medium text-gray-500">Approvate</th>
-                              <th className="text-right py-3 px-4 font-medium text-gray-500">Rifiutate</th>
-                              <th className="text-right py-3 px-4 font-medium text-gray-500">In Attesa</th>
-                              <th className="text-right py-3 px-4 font-medium text-gray-500">Approval %</th>
-                              <th className="text-right py-3 px-4 font-medium text-gray-500">Revenue</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {[...filteredData].reverse().map((d) => {
-                              const mgr = managers.find(m => m.id === d.traffic_manager_id)
-                              return (
-                                <tr key={d.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                                  <td className="py-2 px-4 font-medium">{d.date}</td>
-                                  {selectedManager === "all" && <td className="py-2 px-4 text-gray-500 text-xs">{mgr?.name || "-"}</td>}
-                                  <td className="py-2 px-4 text-right">{formatNumber(d.total_conversions)}</td>
-                                  <td className="py-2 px-4 text-right text-green-600">{formatNumber(d.approved_conversions)}</td>
-                                  <td className="py-2 px-4 text-right text-red-600">{formatNumber(d.rejected_conversions)}</td>
-                                  <td className="py-2 px-4 text-right text-yellow-600">{formatNumber(d.pending_conversions)}</td>
-                                  <td className="py-2 px-4 text-right">
-                                    <Badge className={(d.approval_rate ?? 0) >= 70 ? "bg-green-100 text-green-700" : (d.approval_rate ?? 0) >= 40 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}>
-                                      {(d.approval_rate ?? 0).toFixed(1)}%
-                                    </Badge>
-                                  </td>
-                                  <td className="py-2 px-4 text-right">{formatCurrency(Number(d.revenue))}</td>
+                            {(() => {
+                              const allOffers: any[] = []
+                              for (const d of filteredData) {
+                                const mgr = managers.find(m => m.id === d.traffic_manager_id)
+                                const raw = d.raw_data as any
+                                const offers = Array.isArray(raw) ? raw : raw?.data ? raw.data : []
+                                for (const o of offers) {
+                                  allOffers.push({ ...o, _tmName: mgr?.name || "-" })
+                                }
+                              }
+                              if (allOffers.length === 0) return (
+                                <tr><td colSpan={11} className="text-center py-8 text-gray-400">Nessun dettaglio offerta disponibile</td></tr>
+                              )
+                              const sn = (v: any) => Number(v) || 0
+                              let tReCall = 0, tConf = 0, tCanc = 0, tDoub = 0, tTrash = 0, tTot = 0, tHold = 0, tAppr = 0
+                              const rows = allOffers.map((o, i) => {
+                                const l = o.leads || {}
+                                const c = o.conversions || {}
+                                const reCall = sn(l.to_call_back?.total ?? o.to_call_back?.total)
+                                const conf = sn(l.confirmed?.total ?? o.confirmed?.total)
+                                const canc = sn(l.canceled?.total ?? o.canceled?.total)
+                                const doub = sn(l.double ?? o.double)
+                                const trash = sn(l.trash ?? o.trash)
+                                const tot = conf + canc + reCall + doub + trash
+                                const hold = sn(c.pending?.total)
+                                const appr = sn(c.approved?.total)
+                                const rate = o.delivery_rate ?? o.rate ?? "-"
+                                tReCall += reCall; tConf += conf; tCanc += canc; tDoub += doub; tTrash += trash; tTot += tot; tHold += hold; tAppr += appr
+                                return (
+                                  <tr key={i} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                    <td className="py-2 px-4 font-medium text-gray-900 dark:text-white">
+                                      <span className="text-xs text-gray-400">#{o.offer_id}</span> {o.offer_name || o.name || "-"}
+                                    </td>
+                                    {selectedManager === "all" && <td className="py-2 px-4 text-gray-500 text-xs">{o._tmName}</td>}
+                                    <td className="py-2 px-4 text-right text-gray-500">{typeof rate === "number" ? `${rate}%` : rate}</td>
+                                    <td className="py-2 px-4 text-right text-blue-600 font-medium">{reCall}</td>
+                                    <td className="py-2 px-4 text-right text-green-600 font-medium">{conf}</td>
+                                    <td className="py-2 px-4 text-right text-red-600 font-medium">{canc}</td>
+                                    <td className="py-2 px-4 text-right text-orange-500">{doub}</td>
+                                    <td className="py-2 px-4 text-right text-gray-400">{trash}</td>
+                                    <td className="py-2 px-4 text-right font-bold">{tot}</td>
+                                    <td className="py-2 px-4 text-right text-yellow-600 font-medium">{hold}</td>
+                                    <td className="py-2 px-4 text-right text-purple-600 font-medium">{appr}</td>
+                                  </tr>
+                                )
+                              })
+                              rows.push(
+                                <tr key="totals" className="bg-gray-50 dark:bg-gray-800/50 font-bold border-t-2 border-gray-300">
+                                  <td className="py-2 px-4">Totale</td>
+                                  {selectedManager === "all" && <td />}
+                                  <td />
+                                  <td className="py-2 px-4 text-right text-blue-600">{tReCall}</td>
+                                  <td className="py-2 px-4 text-right text-green-600">{tConf}</td>
+                                  <td className="py-2 px-4 text-right text-red-600">{tCanc}</td>
+                                  <td className="py-2 px-4 text-right text-orange-500">{tDoub}</td>
+                                  <td className="py-2 px-4 text-right text-gray-400">{tTrash}</td>
+                                  <td className="py-2 px-4 text-right">{tTot}</td>
+                                  <td className="py-2 px-4 text-right text-yellow-600">{tHold}</td>
+                                  <td className="py-2 px-4 text-right text-purple-600">{tAppr}</td>
                                 </tr>
                               )
-                            })}
+                              return rows
+                            })()}
                           </tbody>
                         </table>
                       </div>
