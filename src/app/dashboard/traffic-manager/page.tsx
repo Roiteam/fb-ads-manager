@@ -43,9 +43,9 @@ export default function TrafficManagerPage() {
   const [testResult, setTestResult] = useState<any>(null)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [dateFrom, setDateFrom] = useState(() => daysAgo(30))
+  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01` })
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().split("T")[0])
-  const [dateLabel, setDateLabel] = useState("30g")
+  const [dateLabel, setDateLabel] = useState("Questo Mese")
   const [selectedManager, setSelectedManager] = useState<string>("all")
   const [syncResult, setSyncResult] = useState<any>(null)
 
@@ -440,21 +440,24 @@ export default function TrafficManagerPage() {
                 ))}
               </SelectContent>
             </Select>
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {[
-                { label: "7g", days: 7 },
-                { label: "14g", days: 14 },
-                { label: "30g", days: 30 },
-                { label: "90g", days: 90 },
-              ].map(({ label, days }) => (
+                { label: "Oggi", getRange: () => { const t = new Date().toISOString().split("T")[0]; return { from: t, to: t } } },
+                { label: "Ieri", getRange: () => { const y = daysAgo(1); return { from: y, to: y } } },
+                { label: "Questa Settimana", getRange: () => { const d = new Date(); const day = d.getDay() || 7; d.setDate(d.getDate() - day + 1); return { from: d.toISOString().split("T")[0], to: new Date().toISOString().split("T")[0] } } },
+                { label: "Questo Mese", getRange: () => { const d = new Date(); return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`, to: new Date().toISOString().split("T")[0] } } },
+                { label: "Mese Passato", getRange: () => { const d = new Date(); d.setMonth(d.getMonth() - 1); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, "0"); const last = new Date(y, d.getMonth() + 1, 0).getDate(); return { from: `${y}-${m}-01`, to: `${y}-${m}-${String(last).padStart(2, "0")}` } } },
+                { label: "Da Inizio Anno", getRange: () => ({ from: `${new Date().getFullYear()}-01-01`, to: new Date().toISOString().split("T")[0] }) },
+              ].map(({ label, getRange }) => (
                 <Button
                   key={label}
                   variant={dateLabel === label ? "default" : "outline"}
                   size="sm"
                   className="px-2.5 text-xs h-8"
                   onClick={() => {
-                    setDateFrom(daysAgo(days))
-                    setDateTo(new Date().toISOString().split("T")[0])
+                    const { from, to } = getRange()
+                    setDateFrom(from)
+                    setDateTo(to)
                     setDateLabel(label)
                   }}
                 >
