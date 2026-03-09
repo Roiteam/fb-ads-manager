@@ -256,8 +256,9 @@ export default function CampaignsPage() {
                   <th className="text-center py-3 px-4 font-medium text-gray-500">Stato</th>
                   <th className="text-right py-3 px-4 font-medium text-gray-500">Spesa{dateLabel ? ` ${dateLabel}` : ""}</th>
                   <th className="text-right py-3 px-4 font-medium text-gray-500">Impr.</th>
-                  <th className="text-right py-3 px-4 font-medium text-gray-500">Click</th>
-                  <th className="text-right py-3 px-4 font-medium text-gray-500">CTR</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-500">Click Link</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-500">CTR Link</th>
+                  <th className="text-right py-3 px-4 font-medium text-gray-500">CPM</th>
                   <th className="text-right py-3 px-4 font-medium text-gray-500">Conv.</th>
                   <th className="text-right py-3 px-4 font-medium text-gray-500">CPA</th>
                   <th className="text-right py-3 px-4 font-medium text-gray-500">ROAS</th>
@@ -267,7 +268,7 @@ export default function CampaignsPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="text-center py-12 text-gray-500">
+                    <td colSpan={12} className="text-center py-12 text-gray-500">
                       Nessuna campagna trovata
                     </td>
                   </tr>
@@ -295,6 +296,7 @@ export default function CampaignsPage() {
                         <td className="py-3 px-4 text-right">{insight ? formatNumber(insight.impressions) : "-"}</td>
                         <td className="py-3 px-4 text-right">{insight ? formatNumber(insight.clicks) : "-"}</td>
                         <td className="py-3 px-4 text-right">{insight ? formatPercent(insight.ctr) : "-"}</td>
+                        <td className="py-3 px-4 text-right">{insight ? formatCurrency(insight.cpm) : "-"}</td>
                         <td className="py-3 px-4 text-right font-medium">{insight ? formatNumber(insight.conversions) : "-"}</td>
                         <td className="py-3 px-4 text-right">{insight ? formatCurrency(insight.cost_per_conversion) : "-"}</td>
                         <td className="py-3 px-4 text-right">

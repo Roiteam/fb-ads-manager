@@ -86,21 +86,27 @@ export async function POST(request: NextRequest) {
         const dbCampId = campaignMap[insight.campaign_id]
         if (!dbCampId) continue
 
-        const { conversions } = parseActions(insight.actions)
+        const { conversions, linkClicks } = parseActions(insight.actions)
         const { conversionValue } = parseActionValues(insight.action_values)
         const spend = parseFloat(insight.spend || "0")
+        const impressions = parseInt(insight.impressions || "0")
+
+        const clicks = parseInt(insight.inline_link_clicks || "0") || linkClicks
+        const ctr = parseFloat(insight.inline_link_click_ctr || "0") || (impressions > 0 ? (clicks / impressions) * 100 : 0)
+        const cpc = clicks > 0 ? spend / clicks : 0
+        const cpm = parseFloat(insight.cpm || "0")
 
         await serviceClient.from("campaign_insights").upsert({
           campaign_id: dbCampId,
           fb_ad_account_id: account.id,
           date: insight.date_start,
-          impressions: parseInt(insight.impressions || "0"),
-          clicks: parseInt(insight.clicks || "0"),
+          impressions,
+          clicks,
           spend,
           reach: parseInt(insight.reach || "0"),
-          cpm: parseFloat(insight.cpm || "0"),
-          cpc: parseFloat(insight.cpc || "0"),
-          ctr: parseFloat(insight.ctr || "0"),
+          cpm,
+          cpc,
+          ctr,
           conversions,
           cost_per_conversion: conversions > 0 ? spend / conversions : 0,
           conversion_value: conversionValue,

@@ -82,7 +82,7 @@ export async function getCampaignInsights(
   return fbGet(`/${campaignId}/insights`, {
     accessToken,
     params: {
-      fields: 'impressions,clicks,spend,reach,cpm,cpc,ctr,actions,cost_per_action_type,action_values,frequency',
+      fields: 'impressions,clicks,inline_link_clicks,inline_link_click_ctr,spend,reach,cpm,cpc,ctr,actions,cost_per_action_type,action_values,frequency',
       time_range: JSON.stringify(dateRange),
       time_increment: '1',
       limit: '500',
@@ -99,7 +99,7 @@ export async function getAccountInsights(
   return fbGet(`/${accountId}/insights`, {
     accessToken,
     params: {
-      fields: 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,impressions,clicks,spend,reach,cpm,cpc,ctr,actions,cost_per_action_type,action_values,frequency',
+      fields: 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,impressions,clicks,inline_link_clicks,inline_link_click_ctr,spend,reach,cpm,cpc,ctr,actions,cost_per_action_type,action_values,frequency',
       time_range: JSON.stringify(dateRange),
       time_increment: '1',
       level,
@@ -217,34 +217,37 @@ export async function createAdSet(
 }
 
 export function parseActions(actions: Array<{ action_type: string; value: string }> | null | undefined) {
-  if (!actions) return { conversions: 0 }
+  if (!actions) return { conversions: 0, linkClicks: 0 }
 
-  const pixelPurchase = ['offsite_conversion.fb_pixel_purchase']
-  const pixelLead = ['offsite_conversion.fb_pixel_lead']
-  const genericPurchase = ['purchase', 'omni_purchase']
-  const genericLead = ['lead', 'omni_complete_registration']
+  const resultActions = [
+    'offsite_conversion.fb_pixel_lead',
+    'offsite_conversion.fb_pixel_purchase',
+    'offsite_conversion.fb_pixel_complete_registration',
+    'offsite_conversion.fb_pixel_initiate_checkout',
+  ]
 
-  let pixelConversions = 0
-  let genericConversions = 0
+  let conversions = 0
+  let linkClicks = 0
 
   for (const action of actions) {
-    if (pixelPurchase.includes(action.action_type) || pixelLead.includes(action.action_type)) {
-      pixelConversions += parseInt(action.value, 10)
-    } else if (genericPurchase.includes(action.action_type) || genericLead.includes(action.action_type)) {
-      genericConversions += parseInt(action.value, 10)
+    if (resultActions.includes(action.action_type)) {
+      conversions += parseInt(action.value, 10)
+    }
+    if (action.action_type === 'link_click') {
+      linkClicks += parseInt(action.value, 10)
     }
   }
 
-  return { conversions: pixelConversions > 0 ? pixelConversions : genericConversions }
+  return { conversions, linkClicks }
 }
 
 export function parseActionValues(actionValues: Array<{ action_type: string; value: string }> | null | undefined) {
   if (!actionValues) return { conversionValue: 0 }
 
-  const purchaseActions = ['offsite_conversion.fb_pixel_purchase', 'purchase', 'omni_purchase']
+  const valueActions = ['offsite_conversion.fb_pixel_purchase']
   let conversionValue = 0
   for (const av of actionValues) {
-    if (purchaseActions.includes(av.action_type)) {
+    if (valueActions.includes(av.action_type)) {
       conversionValue += parseFloat(av.value)
     }
   }
