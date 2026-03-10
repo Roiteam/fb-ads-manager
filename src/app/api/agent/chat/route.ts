@@ -86,7 +86,7 @@ AZIONI ESEGUIBILI (campo "suggestedAction"):
 - "duplicate_campaign" — Duplica campagna completa (con adset e ads). extractedData: campaignName, newName (opzionale), budget (nuovo budget opzionale), status (default: PAUSED)
 
 **ADS MANAGER — MODIFICA:**
-- "update_adset" — Modifica adset. extractedData: adsetName (o adsetId), updates: { name, status, dailyBudget, bidAmount, targeting, optimizationGoal, startTime, endTime }
+- "update_adset" — Modifica adset. extractedData: adsetName (o adsetId), updates: { name, status, dailyBudget, lifetimeBudget, bidAmount, bidStrategy, roasTarget, targeting, optimizationGoal, pacingType ("standard"/"no_pacing"), dynamicCreative, schedule, attributionSpec, pixelId, customEventType, startTime, endTime }
 - "update_ad" — Modifica ad. extractedData: adId, updates: { name, status, creativeId }
 
 TARGETING FACEBOOK - formato JSON per extractedData.targeting:

@@ -984,11 +984,24 @@ export async function POST(request: NextRequest) {
         if (updates.name) fbParams.name = updates.name
         if (updates.status) fbParams.status = updates.status
         if (updates.dailyBudget) fbParams.daily_budget = String(Math.round(Number(updates.dailyBudget) * 100))
+        if (updates.lifetimeBudget) fbParams.lifetime_budget = String(Math.round(Number(updates.lifetimeBudget) * 100))
         if (updates.bidAmount) fbParams.bid_amount = String(Math.round(Number(updates.bidAmount) * 100))
+        if (updates.bidStrategy) fbParams.bid_strategy = updates.bidStrategy
+        if (updates.roasTarget) fbParams.roas_average_floor = String(Math.round(Number(updates.roasTarget) * 10000))
         if (updates.targeting) fbParams.targeting = typeof updates.targeting === "string" ? updates.targeting : JSON.stringify(updates.targeting)
         if (updates.optimizationGoal) fbParams.optimization_goal = updates.optimizationGoal
+        if (updates.pacingType) fbParams.pacing_type = JSON.stringify([updates.pacingType])
+        if (updates.dynamicCreative !== undefined) fbParams.dynamic_creative = updates.dynamicCreative
+        if (updates.schedule) fbParams.adset_schedule = typeof updates.schedule === "string" ? updates.schedule : JSON.stringify(updates.schedule)
+        if (updates.attributionSpec) fbParams.attribution_spec = typeof updates.attributionSpec === "string" ? updates.attributionSpec : JSON.stringify(updates.attributionSpec)
         if (updates.startTime) fbParams.start_time = updates.startTime
         if (updates.endTime) fbParams.end_time = updates.endTime
+        if (updates.pixelId) {
+          fbParams.promoted_object = JSON.stringify({
+            pixel_id: updates.pixelId,
+            custom_event_type: updates.customEventType || "LEAD",
+          })
+        }
 
         const res = await fetch(`https://graph.facebook.com/v21.0/${resolvedId}`, {
           method: "POST",
@@ -1000,8 +1013,11 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, message: `Errore Facebook: ${data?.error?.message || res.status}` })
         }
 
-        const changeList = Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")
-        return NextResponse.json({ success: true, message: `Adset ${resolvedId} aggiornato: ${changeList}` })
+        const changeList = Object.entries(updates).map(([k, v]) => {
+          if (typeof v === "object") return `${k}: ${JSON.stringify(v)}`
+          return `${k}: ${v}`
+        }).join("\n")
+        return NextResponse.json({ success: true, message: `Adset ${resolvedId} aggiornato:\n${changeList}` })
       } catch (err: any) {
         return NextResponse.json({ success: false, message: `Errore: ${err.message}` })
       }

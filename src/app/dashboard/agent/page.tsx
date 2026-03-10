@@ -205,7 +205,7 @@ Ads Manager — Duplicazione:
 - "duplicate_campaign" — extractedData: campaignName, newName, budget, status
 
 Ads Manager — Modifica:
-- "update_adset" — extractedData: adsetName/adsetId, updates: { name, status, dailyBudget, bidAmount, targeting, optimizationGoal }
+- "update_adset" — extractedData: adsetName/adsetId, updates: { name, status, dailyBudget, lifetimeBudget, bidAmount, bidStrategy, roasTarget, targeting, optimizationGoal, pacingType ("standard"/"no_pacing" per accelerata), dynamicCreative, schedule, attributionSpec, pixelId, customEventType, startTime, endTime }
 - "update_ad" — extractedData: adId, updates: { name, status, creativeId }
 
 Funnel Builder:
