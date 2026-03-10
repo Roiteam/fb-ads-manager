@@ -95,7 +95,19 @@ REGOLE ASSOLUTE:
 12. Rispondi SEMPRE in italiano
 13. OGNI risposta deve essere COMPLETA e AUTONOMA — MAI scrivere "vedi sopra", "risposta sopra", "come detto" o rimandare a messaggi precedenti
 14. Quando l'utente saluta o chiede "cosa posso fare", dai un BRIEFING PERSONALIZZATO: analizza i dati disponibili (campagne, spesa, ROAS, approval rate) e proponi 3-5 azioni concrete da fare oggi
-15. Il campo "reply" nel JSON deve SEMPRE contenere la risposta completa — MAI abbreviarla`
+15. Il campo "reply" nel JSON deve SEMPRE contenere la risposta completa — MAI abbreviarla
+16. ANALIZZA ogni interazione e impara. Nel campo "learnings" (array), estrai insight utili per il futuro. Categorie:
+    - "user_preference": preferenze dell'utente (es. "preferisce CBO", "lavora con offerte lead gen ES/BG")
+    - "campaign_insight": pattern sulle campagne (es. "ANTENNA ES ha CPA migliore di BG", "budget ottimale per lead gen è X")
+    - "strategy_knowledge": strategie che funzionano (es. "per questa nicchia funziona meglio urgency + social proof")
+    - "offer_insight": insight sulle offerte (es. "offerta 2377 converte bene in ES con payout 14€")
+    - "workflow_pattern": come l'utente preferisce lavorare (es. "vuole sempre prima la landing, poi copy, poi strategy")
+    - "correction": quando l'utente ti corregge, memorizza l'errore per non ripeterlo
+    Formato: {"category": "...", "content": "...", "importance": 1-10}
+    Se non c'è nulla da imparare, ometti il campo.
+
+MEMORIA PRECEDENTE (cose che hai imparato dalle interazioni passate):
+{MEMORY}`
 
 async function getToolContext(serviceClient: any, userId: string, isAdmin: boolean) {
   const ctx: any = {}
@@ -329,7 +341,22 @@ export async function POST(request: NextRequest) {
     if (!message) return NextResponse.json({ error: "Message required" }, { status: 400 })
 
     const toolContext = await getToolContext(serviceClient, user.id, isAdmin)
-    const systemPrompt = SYSTEM_PROMPT.replace("{CONTEXT}", JSON.stringify(toolContext, null, 1))
+
+    const { data: memories } = await serviceClient
+      .from("agent_memory")
+      .select("category, content, importance, times_used")
+      .eq("user_id", user.id)
+      .order("importance", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .limit(25)
+
+    const memoryText = memories && memories.length > 0
+      ? memories.map((m: any) => `[${m.category}|imp:${m.importance}] ${m.content}`).join("\n")
+      : "Nessuna memoria precedente — questa è la prima interazione. Impara il più possibile dall'utente."
+
+    const systemPrompt = SYSTEM_PROMPT
+      .replace("{CONTEXT}", JSON.stringify(toolContext, null, 1))
+      .replace("{MEMORY}", memoryText)
 
     const chatMessages = [
       ...(history || []).slice(-12).map((h: any) => {
@@ -391,7 +418,53 @@ export async function POST(request: NextRequest) {
       if (cleanText.length > 10) parsed = { reply: cleanText }
     }
 
-    return NextResponse.json(parsed)
+    if (parsed.learnings && Array.isArray(parsed.learnings) && parsed.learnings.length > 0) {
+      const saveLearnings = async () => {
+        for (const learning of parsed.learnings.slice(0, 5)) {
+          if (!learning.category || !learning.content) continue
+          const validCategories = [
+            "user_preference", "successful_pattern", "mistake_learned",
+            "campaign_insight", "strategy_knowledge", "offer_insight",
+            "workflow_pattern", "correction",
+          ]
+          if (!validCategories.includes(learning.category)) continue
+
+          const { data: existing } = await serviceClient
+            .from("agent_memory")
+            .select("id, importance")
+            .eq("user_id", user.id)
+            .eq("category", learning.category)
+            .ilike("content", `%${learning.content.substring(0, 40)}%`)
+            .limit(1)
+            .single()
+
+          if (existing) {
+            await serviceClient
+              .from("agent_memory")
+              .update({
+                content: learning.content,
+                importance: Math.min(10, (learning.importance || existing.importance) + 1),
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", existing.id)
+          } else {
+            await serviceClient
+              .from("agent_memory")
+              .insert({
+                user_id: user.id,
+                category: learning.category,
+                content: learning.content.substring(0, 1000),
+                context: message.substring(0, 200),
+                importance: learning.importance || 5,
+              })
+          }
+        }
+      }
+      saveLearnings().catch(() => {})
+    }
+
+    const { learnings: _discarded, ...responseWithoutLearnings } = parsed
+    return NextResponse.json(responseWithoutLearnings)
   } catch (error) {
     console.error("Agent chat error:", error)
     return NextResponse.json({

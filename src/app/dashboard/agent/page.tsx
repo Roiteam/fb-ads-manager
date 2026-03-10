@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { createBrowserClient } from "@supabase/ssr"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Send, Bot, RefreshCw, Zap, TrendingDown, TrendingUp, BarChart3, Search, Rocket, FileCode, Video, Copy, Download, Eye } from "lucide-react"
+import { Send, Bot, RefreshCw, Zap, TrendingDown, TrendingUp, BarChart3, Search, Rocket, FileCode, Video, Copy, Download, Eye, Brain } from "lucide-react"
 
 const AGENT_URL = "https://smwtkyvnmyetlektphyy.supabase.co"
 const AGENT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNtd3RreXZubXlldGxla3RwaHl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAwMzk1MzEsImV4cCI6MjA3NTYxNTUzMX0.9YhnYyA7n9qXMgIOvh64Z9-ylYADrW7x2SysbAGvVp0"
@@ -220,6 +220,9 @@ export default function AgentPage() {
   const [generatedContent, setGeneratedContent] = useState<any>({})
   const [showPreview, setShowPreview] = useState(false)
   const [previewHtml, setPreviewHtml] = useState("")
+  const [memoryCount, setMemoryCount] = useState(0)
+  const [showMemory, setShowMemory] = useState(false)
+  const [memoryList, setMemoryList] = useState<any[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const agentSupabase = useRef(createBrowserClient(AGENT_URL, AGENT_KEY))
@@ -242,11 +245,22 @@ export default function AgentPage() {
     init()
   }, [])
 
+  const loadMemoryCount = useCallback(() => {
+    fetch("/api/agent/memory?limit=100")
+      .then(r => r.json())
+      .then(d => {
+        setMemoryCount(d.memories?.length || 0)
+        setMemoryList(d.memories || [])
+      })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (agentLoggedIn) {
       fetch("/api/agent/context").then(r => r.json()).then(d => setToolContext(d.context)).catch(() => {})
+      loadMemoryCount()
     }
-  }, [agentLoggedIn])
+  }, [agentLoggedIn, loadMemoryCount])
 
   const handleAgentLogin = async () => {
     setAgentLoginError("")
@@ -276,6 +290,22 @@ export default function AgentPage() {
     } catch { return toolContext }
   }
 
+  const learnFromAction = useCallback(async (actionName: string, result: string, success: boolean, conversation: string) => {
+    try {
+      await fetch("/api/agent/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "learn",
+          actionName,
+          actionResult: result,
+          wasSuccessful: success,
+          conversation: conversation.substring(0, 500),
+        }),
+      })
+    } catch { /* silent */ }
+  }, [])
+
   const executeAction = async (action: string, params: any): Promise<{ message: string; type?: string; offers?: any[] }> => {
     try {
       const res = await fetch("/api/agent/execute", {
@@ -284,7 +314,12 @@ export default function AgentPage() {
         body: JSON.stringify({ action, params }),
       })
       const result = await res.json()
-      if (result.success) await refreshContext()
+      const success = !!result.success
+      if (success) await refreshContext()
+
+      const lastUserMsg = chatHistory.filter(h => h.role === "user").slice(-1)[0]?.content || ""
+      learnFromAction(action, result.message || "", success, lastUserMsg)
+
       return {
         message: result.message || result.error || "Azione completata",
         type: result.type,
@@ -681,6 +716,7 @@ export default function AgentPage() {
       addMessage({ role: "agent", content: "Errore di connessione. Riprova.", time: formatTime() })
     }
     setIsProcessing(false)
+    loadMemoryCount()
   }
 
   const handleSend = () => {
@@ -765,6 +801,13 @@ export default function AgentPage() {
           <p className="text-sm font-semibold text-white">AI Assistant</p>
           <p className="text-xs text-green-400">Online — Accesso completo al tool</p>
         </div>
+        <button
+          onClick={() => { setShowMemory(!showMemory); if (!showMemory) loadMemoryCount() }}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20"
+          title="Memoria AI">
+          <Brain size={14} />
+          <span>{memoryCount}</span>
+        </button>
         <Button variant="ghost" size="icon" className="text-gray-400 hover:text-white hover:bg-white/10"
           onClick={() => { setMessages([{ role: "agent", content: "Conversazione resettata. Come posso aiutarti?", time: formatTime() }]); setChatHistory([]); setProductData({}); setGeneratedContent({}) }}>
           <RefreshCw size={16} />
@@ -889,6 +932,61 @@ export default function AgentPage() {
           </button>
         </div>
       </div>
+
+      {showMemory && (
+        <div className="fixed inset-y-0 right-0 z-40 w-96 bg-[#0e1621] border-l border-white/10 flex flex-col shadow-2xl">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <Brain size={16} className="text-purple-400" />
+              <h3 className="text-sm font-semibold text-white">Memoria AI ({memoryCount} apprendimenti)</h3>
+            </div>
+            <button onClick={() => setShowMemory(false)} className="text-gray-400 hover:text-white text-lg">✕</button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            {memoryList.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-8">L&apos;agente non ha ancora imparato nulla. Inizia a chattare!</p>
+            ) : (
+              memoryList.map((m: any, i: number) => {
+                const catColors: Record<string, string> = {
+                  user_preference: "bg-blue-500/20 text-blue-300",
+                  successful_pattern: "bg-green-500/20 text-green-300",
+                  mistake_learned: "bg-red-500/20 text-red-300",
+                  campaign_insight: "bg-yellow-500/20 text-yellow-300",
+                  strategy_knowledge: "bg-purple-500/20 text-purple-300",
+                  offer_insight: "bg-pink-500/20 text-pink-300",
+                  workflow_pattern: "bg-cyan-500/20 text-cyan-300",
+                  correction: "bg-orange-500/20 text-orange-300",
+                }
+                const catLabels: Record<string, string> = {
+                  user_preference: "Preferenza",
+                  successful_pattern: "Successo",
+                  mistake_learned: "Errore",
+                  campaign_insight: "Campagna",
+                  strategy_knowledge: "Strategia",
+                  offer_insight: "Offerta",
+                  workflow_pattern: "Workflow",
+                  correction: "Correzione",
+                }
+                return (
+                  <div key={m.id || i} className="bg-[#182533] rounded-lg p-3 border border-white/5">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${catColors[m.category] || "bg-gray-500/20 text-gray-300"}`}>
+                        {catLabels[m.category] || m.category}
+                      </span>
+                      <span className="text-[10px] text-gray-500">imp: {m.importance}/10</span>
+                      {m.times_used > 0 && <span className="text-[10px] text-gray-500">usata {m.times_used}x</span>}
+                    </div>
+                    <p className="text-xs text-gray-300 leading-relaxed">{m.content}</p>
+                  </div>
+                )
+              })
+            )}
+          </div>
+          <div className="px-4 py-3 border-t border-white/10">
+            <p className="text-[10px] text-gray-500 mb-2">L&apos;agente impara automaticamente da ogni interazione. Le memorie più importanti e recenti vengono usate per migliorare le risposte.</p>
+          </div>
+        </div>
+      )}
 
       {showPreview && previewHtml && (
         <div className="fixed inset-0 z-50 bg-black/90 flex flex-col">
