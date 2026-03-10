@@ -47,9 +47,40 @@ AZIONI ESEGUIBILI (campo "suggestedAction"):
 - "search_interests" — Cerca interessi Facebook per targeting (extractedData.query)
 
 **ADS MANAGER — CREAZIONE:**
-- "create_campaign" — Crea nuova campagna Facebook. extractedData: name, objective (OUTCOME_LEADS/OUTCOME_SALES/OUTCOME_TRAFFIC), dailyBudget, bidStrategy (LOWEST_COST_WITHOUT_CAP/COST_CAP/BID_CAP), status (PAUSED/ACTIVE), accountName (opzionale)
-- "create_adset" — Crea adset in una campagna. extractedData: campaignName, name, dailyBudget (o lascia vuoto per CBO), optimizationGoal (OFFSITE_CONVERSIONS/LEAD_GENERATION/LINK_CLICKS), targeting (oggetto JSON con geo_locations, age_min, age_max, interests, ecc.), status, pixelId, bidAmount
-- "create_ad" — Crea ad con creative. extractedData: adsetName (o adsetId), name, pageId (ID pagina Facebook), link (URL landing), primaryText (testo principale), headline, description, imageUrl (o videoId per video), callToAction (LEARN_MORE/SHOP_NOW/SIGN_UP/ORDER_NOW), status
+- "create_campaign" — Crea nuova campagna Facebook. extractedData:
+  - name, objective (OUTCOME_LEADS/OUTCOME_SALES/OUTCOME_TRAFFIC/OUTCOME_ENGAGEMENT/OUTCOME_AWARENESS)
+  - dailyBudget OPPURE lifetimeBudget (in €, non centesimi)
+  - bidStrategy: LOWEST_COST_WITHOUT_CAP (automatico), COST_CAP (con bidAmount), LOWEST_COST_WITH_BID_CAP (bid cap con bidAmount), LOWEST_COST_WITH_MIN_ROAS (con roasTarget)
+  - bidAmount (€ per il cap, solo con COST_CAP o BID_CAP)
+  - roasTarget (es. 2.0 = 200% ROAS, solo con MIN_ROAS)
+  - budgetRebalance (true/false — ribilanciamento CBO tra adset)
+  - status (PAUSED/ACTIVE), accountName, startTime, endTime
+  - specialAdCategories (["HOUSING","CREDIT","EMPLOYMENT","ISSUES_ELECTIONS_POLITICS"])
+- "create_adset" — Crea adset in una campagna. extractedData:
+  - campaignName, name, status
+  - dailyBudget OPPURE lifetimeBudget (€, per ABO; lascia vuoto per CBO)
+  - optimizationGoal: OFFSITE_CONVERSIONS, LEAD_GENERATION, LINK_CLICKS, LANDING_PAGE_VIEWS, IMPRESSIONS, REACH, VALUE (per purchase value optimization)
+  - targeting (JSON — vedi formato sotto)
+  - pixelId + customEventType (LEAD/PURCHASE/COMPLETE_REGISTRATION/ADD_TO_CART/INITIATE_CHECKOUT/VIEW_CONTENT/CONTACT/SUBMIT_APPLICATION)
+  - bidAmount (€ per bid cap a livello adset)
+  - bidStrategy (a livello adset se ABO)
+  - roasTarget (per MIN_ROAS)
+  - dynamicCreative (true → Facebook testa automaticamente combinazioni di creative)
+  - pacingType: "standard" (default) o "no_pacing" (delivery accelerata, spende il budget il prima possibile)
+  - schedule (dayparting — array di fasce orarie, es. [{"start_minute":0,"end_minute":1440,"days":[1,2,3,4,5]}] per lun-ven tutto il giorno)
+  - attributionSpec (es. [{"event_type":"CLICK_THROUGH","window_days":7},{"event_type":"VIEW_THROUGH","window_days":1}])
+  - startTime, endTime
+- "create_ad" — Crea ad con creative. extractedData:
+  - adsetName (o adsetId), name, status
+  - pageId (ID pagina Facebook), instagramActorId (opzionale)
+  - link (URL landing), displayLink (URL visualizzato), urlTags (UTM parameters)
+  - primaryText/message (testo principale — stringa singola o array per dynamic creative)
+  - headline (stringa o array per dynamic creative)
+  - description (stringa o array per dynamic creative)
+  - imageUrl (singola immagine) o imageUrls (array per carousel o dynamic creative)
+  - videoId (per video ads)
+  - callToAction: LEARN_MORE, SHOP_NOW, SIGN_UP, ORDER_NOW, BUY_NOW, GET_OFFER, BOOK_TRAVEL, CONTACT_US, DOWNLOAD, SUBSCRIBE, APPLY_NOW, GET_QUOTE, WATCH_MORE
+  - dynamicCreative (true → il sistema crea un Dynamic Creative ad che testa tutte le combinazioni di immagini/testi/headline)
 
 **ADS MANAGER — DUPLICAZIONE:**
 - "duplicate_campaign" — Duplica campagna completa (con adset e ads). extractedData: campaignName, newName (opzionale), budget (nuovo budget opzionale), status (default: PAUSED)
@@ -60,15 +91,37 @@ AZIONI ESEGUIBILI (campo "suggestedAction"):
 
 TARGETING FACEBOOK - formato JSON per extractedData.targeting:
 {
-  "geo_locations": { "countries": ["IT"] },
+  "geo_locations": { "countries": ["IT"], "regions": [{"key":"3847"}], "cities": [{"key":"2420605"}] },
+  "excluded_geo_locations": { "countries": ["FR"] },
   "age_min": 25, "age_max": 55,
-  "genders": [1, 2],
+  "genders": [0, 1, 2],
   "flexible_spec": [{ "interests": [{ "id": "123456", "name": "Fitness" }] }],
-  "publisher_platforms": ["facebook", "instagram"],
-  "facebook_positions": ["feed", "story", "reel"],
-  "instagram_positions": ["stream", "story", "reels"]
+  "exclusions": { "interests": [{ "id": "789", "name": "Competitor" }] },
+  "custom_audiences": [{ "id": "AUDIENCE_ID" }],
+  "excluded_custom_audiences": [{ "id": "AUDIENCE_ID" }],
+  "locales": [6, 24],
+  "publisher_platforms": ["facebook", "instagram", "audience_network"],
+  "facebook_positions": ["feed", "story", "reel", "marketplace", "video_feeds", "right_hand_column", "search"],
+  "instagram_positions": ["stream", "story", "reels", "explore"],
+  "device_platforms": ["mobile", "desktop"]
 }
 Per trovare gli ID interessi, usa "search_interests" prima.
+
+STRATEGIE BID AVANZATE:
+- LOWEST_COST_WITHOUT_CAP → Facebook ottimizza al costo più basso possibile (default, NO cap)
+- COST_CAP → Imposta un CPA target (bidAmount = €X). Facebook cerca di mantenere il CPA medio sotto il cap
+- LOWEST_COST_WITH_BID_CAP → Bid cap (bidAmount = €X max per bid). Più aggressivo, limita ogni singola offerta
+- LOWEST_COST_WITH_MIN_ROAS → Minimo ROAS target (roasTarget = 2.0 = 200%). Solo per PURCHASE optimization
+
+DELIVERY/PACING:
+- "standard" → distribuzione uniforme nel giorno (default)
+- "no_pacing" → delivery accelerata, spende il budget il prima possibile (utile per test rapidi o offerte a tempo)
+
+DYNAMIC CREATIVE:
+Quando dynamicCreative=true nell'adset + nel create_ad passi array di immagini/testi/headline:
+- Facebook testa automaticamente tutte le combinazioni
+- Mostra le combinazioni migliori in base alle performance
+- Ideale per test A/B automatizzati su larga scala
 
 **FUNNEL BUILDER:**
 - "create_landing" — Genera landing page. extractedData: nome, descrizione, prezzoP, prezzoS, lingua (SEMPRE dalla GEO dell'offerta!), target, categoria, tm (nome del Traffic Manager/network da cui viene l'offerta — il sistema inietterà automaticamente il modulo form del network sopra il footer)

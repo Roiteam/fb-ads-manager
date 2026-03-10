@@ -575,8 +575,15 @@ export async function POST(request: NextRequest) {
       const name = params?.name
       const objective = params?.objective || "OUTCOME_LEADS"
       const dailyBudget = params?.dailyBudget || params?.budget
+      const lifetimeBudget = params?.lifetimeBudget
       const bidStrategy = params?.bidStrategy || "LOWEST_COST_WITHOUT_CAP"
+      const bidAmount = params?.bidAmount
+      const roasTarget = params?.roasTarget
       const status = params?.status || "PAUSED"
+      const budgetRebalance = params?.budgetRebalance
+      const specialAdCategories = params?.specialAdCategories || []
+      const startTime = params?.startTime
+      const endTime = params?.endTime
 
       if (!name) return NextResponse.json({ success: false, message: "Nome campagna richiesto" })
 
@@ -600,15 +607,27 @@ export async function POST(request: NextRequest) {
       if (!account?.access_token) return NextResponse.json({ success: false, message: "Nessun account Facebook trovato o token mancante" })
 
       try {
-        const fbParams: Record<string, string> = {
+        const fbParams: Record<string, any> = {
           name,
           objective,
           status,
-          special_ad_categories: JSON.stringify([]),
+          special_ad_categories: JSON.stringify(specialAdCategories),
           access_token: account.access_token,
         }
         if (dailyBudget) fbParams.daily_budget = String(Math.round(Number(dailyBudget) * 100))
+        if (lifetimeBudget) fbParams.lifetime_budget = String(Math.round(Number(lifetimeBudget) * 100))
         if (bidStrategy) fbParams.bid_strategy = bidStrategy
+        if (bidAmount && (bidStrategy === "LOWEST_COST_WITH_BID_CAP" || bidStrategy === "COST_CAP")) {
+          fbParams.bid_strategy = bidStrategy
+        }
+        if (budgetRebalance !== undefined) fbParams.budget_rebalance_flag = budgetRebalance
+        if (startTime) fbParams.start_time = startTime
+        if (endTime) fbParams.end_time = endTime
+        if (lifetimeBudget && !endTime) {
+          const end = new Date()
+          end.setDate(end.getDate() + 30)
+          fbParams.end_time = end.toISOString()
+        }
 
         const res = await fetch(`https://graph.facebook.com/v21.0/${account.account_id}/campaigns`, {
           method: "POST",
@@ -631,9 +650,10 @@ export async function POST(request: NextRequest) {
           bid_strategy: bidStrategy,
         })
 
+        const budgetInfo = dailyBudget ? `€${dailyBudget}/giorno` : lifetimeBudget ? `€${lifetimeBudget} lifetime` : "non impostato"
         return NextResponse.json({
           success: true,
-          message: `Campagna "${name}" creata su ${account.name}!\nID: ${data.id}\nObiettivo: ${objective}\nBudget: €${dailyBudget || "non impostato"}/giorno\nStato: ${status}\nBid Strategy: ${bidStrategy}`,
+          message: `Campagna "${name}" creata su ${account.name}!\nID: ${data.id}\nObiettivo: ${objective}\nBudget: ${budgetInfo}\nBid Strategy: ${bidStrategy}${bidAmount ? ` (cap: €${bidAmount})` : ""}\nStato: ${status}${budgetRebalance ? "\nCBO Budget Rebalance: attivo" : ""}`,
           campaignId: data.id,
         })
       } catch (err: any) {
@@ -649,12 +669,21 @@ export async function POST(request: NextRequest) {
       const campaignId = params?.campaignId
       const name = params?.name
       const dailyBudget = params?.dailyBudget || params?.budget
+      const lifetimeBudget = params?.lifetimeBudget
       const optimizationGoal = params?.optimizationGoal || "OFFSITE_CONVERSIONS"
       const targeting = params?.targeting || {}
       const status = params?.status || "PAUSED"
       const pixelId = params?.pixelId
+      const customEventType = params?.customEventType || "LEAD"
       const startTime = params?.startTime
+      const endTime = params?.endTime
       const bidAmount = params?.bidAmount
+      const bidStrategy = params?.bidStrategy
+      const roasTarget = params?.roasTarget
+      const dynamicCreative = params?.dynamicCreative
+      const pacingType = params?.pacingType
+      const schedule = params?.schedule
+      const attributionSpec = params?.attributionSpec
 
       if (!name) return NextResponse.json({ success: false, message: "Nome adset richiesto" })
 
@@ -685,9 +714,31 @@ export async function POST(request: NextRequest) {
           access_token: token,
         }
         if (dailyBudget) fbParams.daily_budget = String(Math.round(Number(dailyBudget) * 100))
+        if (lifetimeBudget) fbParams.lifetime_budget = String(Math.round(Number(lifetimeBudget) * 100))
         if (bidAmount) fbParams.bid_amount = String(Math.round(Number(bidAmount) * 100))
-        if (pixelId) fbParams.promoted_object = JSON.stringify({ pixel_id: pixelId, custom_event_type: "LEAD" })
+        if (bidStrategy) fbParams.bid_strategy = bidStrategy
+        if (roasTarget) fbParams.roas_average_floor = String(Math.round(Number(roasTarget) * 10000))
+        if (pixelId) {
+          fbParams.promoted_object = JSON.stringify({
+            pixel_id: pixelId,
+            custom_event_type: customEventType,
+          })
+        }
         if (startTime) fbParams.start_time = startTime
+        if (endTime) fbParams.end_time = endTime
+        if (lifetimeBudget && !endTime) {
+          const end = new Date()
+          end.setDate(end.getDate() + 30)
+          fbParams.end_time = end.toISOString()
+        }
+        if (dynamicCreative) fbParams.dynamic_creative = true
+        if (pacingType) fbParams.pacing_type = JSON.stringify([pacingType])
+        if (schedule) fbParams.adset_schedule = typeof schedule === "string" ? schedule : JSON.stringify(schedule)
+        if (attributionSpec) {
+          fbParams.attribution_spec = typeof attributionSpec === "string"
+            ? attributionSpec
+            : JSON.stringify(attributionSpec)
+        }
 
         const res = await fetch(`https://graph.facebook.com/v21.0/${accountId}/adsets`, {
           method: "POST",
@@ -700,9 +751,24 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, message: `Errore Facebook: ${data?.error?.message || res.status}` })
         }
 
+        const budgetInfo = dailyBudget ? `€${dailyBudget}/giorno` : lifetimeBudget ? `€${lifetimeBudget} lifetime` : "CBO"
+        const details = [
+          `Adset "${name}" creato nella campagna "${campaign.name}"!`,
+          `ID: ${data.id}`,
+          `Budget: ${budgetInfo}`,
+          `Ottimizzazione: ${optimizationGoal}`,
+          bidAmount ? `Bid Cap: €${bidAmount}` : null,
+          bidStrategy ? `Bid Strategy: ${bidStrategy}` : null,
+          roasTarget ? `ROAS Target: ${roasTarget}x` : null,
+          dynamicCreative ? "Dynamic Creative: attivo" : null,
+          pacingType ? `Pacing: ${pacingType}` : null,
+          pixelId ? `Pixel: ${pixelId} (${customEventType})` : null,
+          `Stato: ${status}`,
+        ].filter(Boolean)
+
         return NextResponse.json({
           success: true,
-          message: `Adset "${name}" creato nella campagna "${campaign.name}"!\nID: ${data.id}\nBudget: €${dailyBudget || "CBO"}/giorno\nOttimizzazione: ${optimizationGoal}\nStato: ${status}`,
+          message: details.join("\n"),
           adsetId: data.id,
         })
       } catch (err: any) {
@@ -718,14 +784,19 @@ export async function POST(request: NextRequest) {
       const adsetId = params?.adsetId
       const name = params?.name || "Ad"
       const pageId = params?.pageId
+      const instagramActorId = params?.instagramActorId
       const link = params?.link
       const message = params?.primaryText || params?.message
       const headline = params?.headline
       const description = params?.description
       const imageUrl = params?.imageUrl
+      const imageUrls = params?.imageUrls
       const videoId = params?.videoId
       const callToAction = params?.callToAction || "LEARN_MORE"
       const status = params?.status || "PAUSED"
+      const urlTags = params?.urlTags
+      const displayLink = params?.displayLink
+      const isDynamicCreative = params?.dynamicCreative
 
       let resolvedAdsetId = adsetId
       let token: string | null = null
@@ -760,6 +831,55 @@ export async function POST(request: NextRequest) {
 
       try {
         const objectStorySpec: any = { page_id: pageId }
+        if (instagramActorId) objectStorySpec.instagram_actor_id = instagramActorId
+
+        if (isDynamicCreative && (imageUrls?.length || 0) > 0) {
+          const assetFeedSpec: any = {
+            images: (imageUrls || [imageUrl]).filter(Boolean).map((url: string) => ({ url })),
+            bodies: Array.isArray(message) ? message.map((t: string) => ({ text: t })) : [{ text: message || "" }],
+            titles: Array.isArray(headline) ? headline.map((t: string) => ({ text: t })) : [{ text: headline || "" }],
+            descriptions: Array.isArray(description) ? description.map((t: string) => ({ text: t })) : [{ text: description || "" }],
+            call_to_action_types: [callToAction],
+            link_urls: [{ website_url: link || "" }],
+          }
+
+          const creativeRes = await fetch(`https://graph.facebook.com/v21.0/${accountId}/adcreatives`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: `DC - ${name}`,
+              asset_feed_spec: assetFeedSpec,
+              object_story_spec: { page_id: pageId, ...(instagramActorId ? { instagram_actor_id: instagramActorId } : {}) },
+              ...(urlTags ? { url_tags: urlTags } : {}),
+              access_token: token,
+            }),
+          })
+          const creativeData = await creativeRes.json()
+          if (!creativeRes.ok || creativeData.error) {
+            return NextResponse.json({ success: false, message: `Errore dynamic creative: ${creativeData?.error?.message || creativeRes.status}` })
+          }
+
+          const adRes = await fetch(`https://graph.facebook.com/v21.0/${accountId}/ads`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, adset_id: resolvedAdsetId, creative: { creative_id: creativeData.id }, status, access_token: token }),
+          })
+          const adData = await adRes.json()
+          if (!adRes.ok || adData.error) {
+            return NextResponse.json({ success: false, message: `Errore creazione ad: ${adData?.error?.message || adRes.status}` })
+          }
+
+          const imgCount = (imageUrls || [imageUrl]).filter(Boolean).length
+          const bodyCount = Array.isArray(message) ? message.length : 1
+          const titleCount = Array.isArray(headline) ? headline.length : 1
+          return NextResponse.json({
+            success: true,
+            message: `Dynamic Creative Ad "${name}" creato!\nAd ID: ${adData.id}\nImmagini: ${imgCount}, Testi: ${bodyCount}, Headline: ${titleCount}\nFacebook testerà automaticamente tutte le combinazioni.\nStato: ${status}`,
+            adId: adData.id,
+            creativeId: creativeData.id,
+          })
+        }
+
         if (videoId) {
           objectStorySpec.video_data = {
             video_id: videoId, title: headline || "", message: message || "",
@@ -767,23 +887,39 @@ export async function POST(request: NextRequest) {
             call_to_action: { type: callToAction, value: { link: link || "" } },
             ...(imageUrl ? { image_url: imageUrl } : {}),
           }
+        } else if (imageUrls && imageUrls.length > 1) {
+          objectStorySpec.link_data = {
+            link: link || "",
+            message: message || "",
+            child_attachments: imageUrls.map((url: string, i: number) => ({
+              link: link || "",
+              picture: url,
+              name: Array.isArray(headline) ? headline[i] || headline[0] : headline || "",
+              description: Array.isArray(description) ? description[i] || description[0] : description || "",
+              call_to_action: { type: callToAction },
+            })),
+          }
         } else {
           objectStorySpec.link_data = {
             link: link || "", message: message || "", name: headline || "",
             description: description || "",
             call_to_action: { type: callToAction },
             ...(imageUrl ? { picture: imageUrl } : {}),
+            ...(displayLink ? { caption: displayLink } : {}),
           }
         }
+
+        const creativePayload: any = {
+          name: `Creative - ${name}`,
+          object_story_spec: objectStorySpec,
+          access_token: token,
+        }
+        if (urlTags) creativePayload.url_tags = urlTags
 
         const creativeRes = await fetch(`https://graph.facebook.com/v21.0/${accountId}/adcreatives`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: `Creative - ${name}`,
-            object_story_spec: objectStorySpec,
-            access_token: token,
-          }),
+          body: JSON.stringify(creativePayload),
         })
         const creativeData = await creativeRes.json()
         if (!creativeRes.ok || creativeData.error) {
@@ -793,22 +929,17 @@ export async function POST(request: NextRequest) {
         const adRes = await fetch(`https://graph.facebook.com/v21.0/${accountId}/ads`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            adset_id: resolvedAdsetId,
-            creative: { creative_id: creativeData.id },
-            status,
-            access_token: token,
-          }),
+          body: JSON.stringify({ name, adset_id: resolvedAdsetId, creative: { creative_id: creativeData.id }, status, access_token: token }),
         })
         const adData = await adRes.json()
         if (!adRes.ok || adData.error) {
           return NextResponse.json({ success: false, message: `Errore creazione ad: ${adData?.error?.message || adRes.status}` })
         }
 
+        const adType = videoId ? "Video" : (imageUrls && imageUrls.length > 1) ? "Carousel" : "Image"
         return NextResponse.json({
           success: true,
-          message: `Ad "${name}" creato!\nAd ID: ${adData.id}\nCreative ID: ${creativeData.id}\nAdset: ${resolvedAdsetId}\nStato: ${status}`,
+          message: `${adType} Ad "${name}" creato!\nAd ID: ${adData.id}\nCreative ID: ${creativeData.id}\nAdset: ${resolvedAdsetId}\nStato: ${status}`,
           adId: adData.id,
           creativeId: creativeData.id,
         })

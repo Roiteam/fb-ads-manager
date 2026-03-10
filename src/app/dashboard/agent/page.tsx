@@ -197,9 +197,9 @@ Ads Manager — Gestione:
 - "search_interests" — Cerca interessi per targeting (extractedData.query)
 
 Ads Manager — Creazione:
-- "create_campaign" — extractedData: name, objective (OUTCOME_LEADS/OUTCOME_SALES/OUTCOME_TRAFFIC), dailyBudget, bidStrategy, status, accountName
-- "create_adset" — extractedData: campaignName, name, dailyBudget, optimizationGoal, targeting (JSON), status, pixelId, bidAmount
-- "create_ad" — extractedData: adsetName, name, pageId, link, primaryText, headline, description, imageUrl/videoId, callToAction, status
+- "create_campaign" — extractedData: name, objective, dailyBudget/lifetimeBudget, bidStrategy (LOWEST_COST_WITHOUT_CAP/COST_CAP/LOWEST_COST_WITH_BID_CAP/LOWEST_COST_WITH_MIN_ROAS), bidAmount (€ cap), roasTarget, budgetRebalance, status, accountName
+- "create_adset" — extractedData: campaignName, name, dailyBudget/lifetimeBudget, optimizationGoal, targeting (JSON), pixelId, customEventType, bidAmount, bidStrategy, roasTarget, dynamicCreative, pacingType ("standard"/"no_pacing" per accelerata), schedule (dayparting), attributionSpec, status
+- "create_ad" — extractedData: adsetName, name, pageId, instagramActorId, link, displayLink, urlTags, primaryText (stringa o array), headline (stringa o array), description (stringa o array), imageUrl/imageUrls (array per carousel/DC), videoId, callToAction, dynamicCreative, status
 
 Ads Manager — Duplicazione:
 - "duplicate_campaign" — extractedData: campaignName, newName, budget, status
