@@ -72,6 +72,7 @@ export default function TrafficManagerPage() {
     },
     extra_params: {} as Record<string, string>,
     extra_params_text: "",
+    form_module_json: "",
   })
 
   const load = useCallback(async () => {

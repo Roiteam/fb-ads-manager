@@ -507,7 +507,7 @@ export async function POST(request: NextRequest) {
 
       if (!campaignName) return NextResponse.json({ success: false, message: "Nome campagna richiesto" })
 
-      let { data: campaign } = await serviceClient
+      const { data: campaign } = await serviceClient
         .from("campaigns").select("*, fb_ad_account:fb_ad_accounts(access_token, account_id)")
         .ilike("name", `%${campaignName}%`).limit(1).single()
       if (!campaign) return NextResponse.json({ success: false, message: `Campagna "${campaignName}" non trovata` })
@@ -1127,7 +1127,7 @@ export async function POST(request: NextRequest) {
       const campaignName = params?.campaignName
       if (!campaignName) return NextResponse.json({ success: false, message: "Nome campagna richiesto" })
 
-      let { data: campaign } = await serviceClient.from("campaigns")
+      const { data: campaign } = await serviceClient.from("campaigns")
         .select("*, fb_ad_account:fb_ad_accounts(access_token)").ilike("name", `%${campaignName}%`).limit(1).single()
       if (!campaign) return NextResponse.json({ success: false, message: `Campagna "${campaignName}" non trovata` })
 
