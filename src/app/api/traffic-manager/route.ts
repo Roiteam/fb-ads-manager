@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     if (action === "create") {
       const baseUrl = (body.api_base_url || "").replace(/\/$/, "")
 
-      const { data, error } = await serviceClient.from("traffic_managers").insert({
+      const insertData: any = {
         name: body.name,
         api_base_url: baseUrl,
         api_key: body.api_key || null,
@@ -58,7 +58,9 @@ export async function POST(request: NextRequest) {
         extra_params: body.extra_params || {},
         is_active: true,
         created_by: user.id,
-      }).select().single()
+      }
+      if (body.form_module_json !== undefined) insertData.form_module_json = body.form_module_json
+      const { data, error } = await serviceClient.from("traffic_managers").insert(insertData).select().single()
 
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
       return NextResponse.json({ success: true, manager: data })
@@ -70,6 +72,15 @@ export async function POST(request: NextRequest) {
       const { error } = await serviceClient.from("traffic_managers").update(updates).eq("id", id)
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
       return NextResponse.json({ success: true })
+    }
+
+    if (action === "get_form_module") {
+      const tmName = body.tmName || body.id
+      let query = serviceClient.from("traffic_managers").select("id, name, form_module_json")
+      if (tmName) query = query.ilike("name", `%${tmName}%`)
+      const { data: tm } = await query.limit(1).single()
+      if (!tm || !tm.form_module_json) return NextResponse.json({ formModule: null })
+      return NextResponse.json({ formModule: tm.form_module_json })
     }
 
     if (action === "delete") {

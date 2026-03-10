@@ -116,7 +116,7 @@ export default function TrafficManagerPage() {
       id: "", name: "", preset: "custom", api_base_url: "", api_key: "", api_secret: "",
       auth_type: "bearer", auth_param_name: "Authorization", endpoint_path: "/conversions",
       response_mapping: { data_root: "data", total_field: "total", approved_field: "approved", rejected_field: "rejected", pending_field: "pending", revenue_field: "revenue", date_field: "date" },
-      extra_params: {}, extra_params_text: "",
+      extra_params: {}, extra_params_text: "", form_module_json: "",
     })
     setTestResult(null)
     setShowForm(false)
@@ -189,6 +189,7 @@ export default function TrafficManagerPage() {
           endpoint_path: form.endpoint_path,
           response_mapping: form.response_mapping,
           extra_params: extraParams,
+          form_module_json: form.form_module_json ? (() => { try { return JSON.parse(form.form_module_json) } catch { return null } })() : null,
         }),
       })
       const json = await res.json()
@@ -245,6 +246,7 @@ export default function TrafficManagerPage() {
       response_mapping: m.response_mapping as any || {},
       extra_params: m.extra_params || {},
       extra_params_text: Object.keys(m.extra_params || {}).length > 0 ? JSON.stringify(m.extra_params, null, 2) : "",
+      form_module_json: (m as any).form_module_json ? JSON.stringify((m as any).form_module_json, null, 2) : "",
     })
     setShowForm(true)
   }
@@ -366,6 +368,20 @@ export default function TrafficManagerPage() {
               </div>
             </div>
             <p className="text-xs text-gray-400">Li trovi nelle impostazioni API del tuo tracker</p>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Modulo Form (JSON Elementor) — opzionale</label>
+              <textarea
+                value={form.form_module_json}
+                onChange={e => setForm({ ...form, form_module_json: e.target.value })}
+                placeholder='Incolla qui il JSON Elementor del modulo lead del network (widget "form" con i campi nome, telefono, etc.)'
+                rows={4}
+                className="w-full rounded-md border border-gray-200 dark:border-gray-700 bg-transparent px-3 py-2 text-sm font-mono resize-y"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Esporta il modulo da WordPress/Elementor come JSON e incollalo qui. Verrà iniettato automaticamente sopra il footer quando crei una landing per un&apos;offerta di questo network.
+              </p>
+            </div>
 
             <div className="flex items-center gap-3 pt-2">
               <Button onClick={handleSave} disabled={saving || !form.name || !form.api_base_url || !form.api_key}>
