@@ -585,6 +585,7 @@ export async function POST(request: NextRequest) {
 
       if (!accountId) return NextResponse.json({ success: false, message: `Account Facebook non trovato per la campagna "${origName}". Impossibile duplicare.` })
 
+      const copyLog: string[] = []
       try {
         let newCampaignId: string | null = null
 
@@ -634,29 +635,44 @@ export async function POST(request: NextRequest) {
           const origAdsets = origAdsetsData.data || []
 
           for (const adset of origAdsets) {
-            // Copia adset SENZA deep_copy (shell)
+            // Copia adset shell
             const adsetShellRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/copies`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ access_token: token, campaign_id: newCampaignId, deep_copy: false, status_option: "PAUSED" }),
             })
             const adsetShellData = await adsetShellRes.json()
-            const newAdsetId = adsetShellData.copied_adset_id || adsetShellData.id
-            if (!newAdsetId) continue
+            const newAdsetId = adsetShellData.copied_adset_id || adsetShellData.id || adsetShellData.copied_ad_set_id
+            if (!newAdsetId) {
+              copyLog.push(`ADSET "${adset.name}" FALLITO: ${JSON.stringify(adsetShellData).slice(0, 300)}`)
+              continue
+            }
+            copyLog.push(`ADSET "${adset.name}" → ${newAdsetId}`)
 
-            // Leggi TUTTI gli ads originali con il loro creative ID
+            // Leggi gli ads originali
             const origAdsRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/ads?fields=id,name,status,creative{id}&limit=100&access_token=${encodeURIComponent(token)}`)
             const origAdsData = await origAdsRes.json()
+            const origAds = origAdsData.data || []
+            copyLog.push(`  Ads originali trovati: ${origAds.length}`)
 
-            // Crea ogni ad nel nuovo adset con lo stesso creative
-            for (const ad of origAdsData.data || []) {
+            for (const ad of origAds) {
               const crId = ad.creative?.id
-              if (!crId) continue
-              await fetch(`https://graph.facebook.com/v21.0/${accountId}/ads`, {
+              if (!crId) {
+                copyLog.push(`  AD "${ad.name}" SKIP: no creative id`)
+                continue
+              }
+
+              const adCreateRes = await fetch(`https://graph.facebook.com/v21.0/${accountId}/ads`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: ad.name || "Ad Copy", adset_id: newAdsetId, creative: { creative_id: crId }, status: "PAUSED", access_token: token }),
               })
+              const adCreateData = await adCreateRes.json()
+              if (adCreateRes.ok && !adCreateData.error) {
+                copyLog.push(`  AD "${ad.name}" → ${adCreateData.id}`)
+              } else {
+                copyLog.push(`  AD "${ad.name}" FALLITO: ${adCreateData?.error?.message || JSON.stringify(adCreateData).slice(0, 200)}`)
+              }
             }
           }
         }
@@ -732,6 +748,7 @@ export async function POST(request: NextRequest) {
             ``,
             `${adsets.length} adsets, ${totalAds} ads copiati`,
             adsetList,
+            copyLog && copyLog.length > 0 ? `\nDettaglio copia:\n${copyLog.join("\n")}` : "",
           ].join("\n"),
           newCampaignId,
         })
