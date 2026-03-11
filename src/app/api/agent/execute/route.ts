@@ -580,45 +580,79 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: `Campagna "${campaignName || campaignId}" non trovata né nel database né su Facebook. Campagne disponibili: usa "list_campaigns" per vedere la lista.` })
       }
 
-      try {
-        // STEP 2: Duplica — una sola chiamata, come il tasto Duplica del BM
-        const copyBody: any = { access_token: token, deep_copy: true, status_option: newStatus === "ACTIVE" ? "ACTIVE" : "PAUSED" }
-        if (newName) { copyBody.rename_options = { rename_strategy: "DEEP_RENAME" }; copyBody.rename_prefix = ""; copyBody.rename_suffix = "" }
+      // Trova l'account_id per le chiamate che lo richiedono
+      let accountId: string | null = null
+      if (accountDbId) {
+        const { data: acc } = await serviceClient.from("fb_ad_accounts").select("account_id").eq("id", accountDbId).single()
+        accountId = acc?.account_id || null
+      }
 
+      try {
+        let newCampaignId: string | null = null
+
+        // STEP 2A: Prova deep_copy diretto (funziona se <=3 oggetti figli)
         const copyRes = await fetch(`https://graph.facebook.com/v21.0/${fbCampaignId}/copies`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(copyBody),
+          body: JSON.stringify({ access_token: token, deep_copy: true, status_option: newStatus === "ACTIVE" ? "ACTIVE" : "PAUSED" }),
         })
         const copyData = await copyRes.json()
 
-        if (!copyRes.ok || copyData.error) {
-          return NextResponse.json({
-            success: false,
-            message: `Errore Facebook duplicazione "${origName}" (${fbCampaignId}):\n${copyData?.error?.message || copyRes.status}\n${copyData?.error?.error_user_msg || ""}\n\nRisposta raw: ${JSON.stringify(copyData).slice(0, 500)}`,
-          })
+        if (copyRes.ok && !copyData.error && copyData.copied_campaign_id) {
+          newCampaignId = copyData.copied_campaign_id
         }
 
-        const newCampaignId = copyData.copied_campaign_id
+        // STEP 2B: Se troppi oggetti → copia campagna vuota + copia ogni adset singolarmente
         if (!newCampaignId) {
-          return NextResponse.json({
-            success: false,
-            message: `Facebook ha risposto ma senza copied_campaign_id.\nRisposta: ${JSON.stringify(copyData).slice(0, 500)}\n\nControlla nel Business Manager se è stata creata una copia.`,
+          const errMsg = copyData?.error?.message || ""
+          const isTooLarge = errMsg.includes("too large") || errMsg.includes("fewer than") || (copyData?.error?.error_subcode === 1885194)
+
+          if (!isTooLarge) {
+            return NextResponse.json({
+              success: false,
+              message: `Errore Facebook duplicazione "${origName}" (${fbCampaignId}):\n${errMsg}\n${copyData?.error?.error_user_msg || ""}`,
+            })
+          }
+
+          // Copia campagna SENZA deep_copy (solo il contenitore)
+          const shellRes = await fetch(`https://graph.facebook.com/v21.0/${fbCampaignId}/copies`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ access_token: token, deep_copy: false, status_option: "PAUSED" }),
           })
+          const shellData = await shellRes.json()
+
+          if (!shellRes.ok || shellData.error || !shellData.copied_campaign_id) {
+            return NextResponse.json({
+              success: false,
+              message: `Errore copia campagna base: ${shellData?.error?.message || "nessun ID restituito"}`,
+            })
+          }
+          newCampaignId = shellData.copied_campaign_id
+
+          // Leggi gli adset originali e copiali uno per uno nella nuova campagna
+          const origAdsetsRes = await fetch(`https://graph.facebook.com/v21.0/${fbCampaignId}/adsets?fields=id,name&limit=50&access_token=${encodeURIComponent(token)}`)
+          const origAdsetsData = await origAdsetsRes.json()
+          const origAdsets = origAdsetsData.data || []
+
+          for (const adset of origAdsets) {
+            try {
+              await fetch(`https://graph.facebook.com/v21.0/${adset.id}/copies`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ access_token: token, campaign_id: newCampaignId, deep_copy: true, status_option: "PAUSED" }),
+              })
+            } catch { /* skip singolo adset, continua con gli altri */ }
+          }
         }
 
         // STEP 3: Rinomina se richiesto
-        if (newName) {
-          const renameRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ access_token: token, name: newName }),
-          })
-          const renameData = await renameRes.json()
-          if (renameData.error) { /* non bloccare per errore rename */ }
+        if (newName && newCampaignId) {
+          try { await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ access_token: token, name: newName }) }) } catch { /* skip */ }
         }
 
         // STEP 4: Cambia budget se richiesto (prova CBO, poi ABO)
-        if (newBudget) {
+        if (newBudget && newCampaignId) {
           const budgetCents = String(Math.round(Number(newBudget) * 100))
           const cboRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -626,23 +660,20 @@ export async function POST(request: NextRequest) {
           })
           const cboData = await cboRes.json()
           if (!cboRes.ok || cboData.error) {
-            const adsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id&limit=50&access_token=${encodeURIComponent(token)}`)
-            const adsetsData = await adsetsRes.json()
-            for (const adset of adsetsData.data || []) {
+            const newAdsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id&limit=50&access_token=${encodeURIComponent(token)}`)
+            const newAdsetsData = await newAdsetsRes.json()
+            for (const adset of newAdsetsData.data || []) {
               try { await fetch(`https://graph.facebook.com/v21.0/${adset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ access_token: token, daily_budget: budgetCents }) }) } catch { /* skip */ }
             }
           }
         }
 
-        // STEP 5: Verifica su Facebook che la copia esiste davvero
+        // STEP 5: Verifica su Facebook
         const verifyRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}?fields=id,name,status,daily_budget,lifetime_budget,bid_strategy,objective&access_token=${encodeURIComponent(token)}`)
         const v = await verifyRes.json()
 
         if (v.error) {
-          return NextResponse.json({
-            success: false,
-            message: `Facebook ha detto di aver duplicato (ID: ${newCampaignId}) ma la verifica fallisce:\n${v.error.message}\n\nControlla nel Business Manager.`,
-          })
+          return NextResponse.json({ success: false, message: `Duplicazione avviata (ID: ${newCampaignId}) ma verifica fallita: ${v.error.message}. Controlla nel BM.` })
         }
 
         const adsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id,name,status&limit=50&access_token=${encodeURIComponent(token)}`)
@@ -656,7 +687,6 @@ export async function POST(request: NextRequest) {
           totalAds += adsData.data?.length || 0
         }
 
-        // Salva in Supabase
         try {
           await serviceClient.from("campaigns").upsert({
             fb_campaign_id: newCampaignId,
@@ -668,10 +698,10 @@ export async function POST(request: NextRequest) {
             bid_strategy: v.bid_strategy,
             last_synced_at: new Date().toISOString(),
           }, { onConflict: "fb_campaign_id,fb_ad_account_id" })
-        } catch { /* non bloccare per errore DB */ }
+        } catch { /* skip */ }
 
         const isCBO = !!(v.daily_budget || v.lifetime_budget)
-        const adsetList = adsets.length > 0 ? adsets.map((a: any) => `  • ${a.name} (${a.status})`).join("\n") : "  (nessun adset trovato)"
+        const adsetList = adsets.length > 0 ? adsets.map((a: any) => `  • ${a.name} (${a.status})`).join("\n") : "  (nessun adset)"
 
         return NextResponse.json({
           success: true,
@@ -679,22 +709,19 @@ export async function POST(request: NextRequest) {
             `DUPLICATA CON SUCCESSO`,
             `"${origName}" → "${v.name}"`,
             ``,
-            `Facebook Campaign ID: ${newCampaignId}`,
-            `Tipo: ${isCBO ? "CBO" : "ABO"}`,
-            `Obiettivo: ${v.objective}`,
+            `ID: ${newCampaignId}`,
+            `Tipo: ${isCBO ? "CBO" : "ABO"} | Obiettivo: ${v.objective}`,
             `Bid: ${v.bid_strategy || "LOWEST_COST"}`,
             `Budget: ${v.daily_budget ? "€" + Number(v.daily_budget) / 100 + "/giorno" : v.lifetime_budget ? "€" + Number(v.lifetime_budget) / 100 + " lifetime" : "a livello adset"}`,
             `Stato: ${v.status}`,
             ``,
-            `Contenuto copiato: ${adsets.length} adsets, ${totalAds} ads`,
+            `${adsets.length} adsets, ${totalAds} ads copiati`,
             adsetList,
-            ``,
-            `Verifica nel BM: la campagna "${v.name}" dovrebbe essere visibile ora.`,
           ].join("\n"),
           newCampaignId,
         })
       } catch (err: any) {
-        return NextResponse.json({ success: false, message: `Errore: ${err.message}` })
+        return NextResponse.json({ success: false, message: `Errore duplicazione: ${err.message}` })
       }
     }
 
