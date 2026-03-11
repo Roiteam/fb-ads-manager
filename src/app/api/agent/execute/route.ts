@@ -662,16 +662,22 @@ export async function POST(request: NextRequest) {
                 continue
               }
 
+              const adParams = new URLSearchParams()
+              adParams.append("name", ad.name || "Ad Copy")
+              adParams.append("adset_id", newAdsetId)
+              adParams.append("creative", JSON.stringify({ creative_id: crId }))
+              adParams.append("status", "PAUSED")
+              adParams.append("access_token", token)
+
               const adCreateRes = await fetch(`https://graph.facebook.com/v21.0/${accountId}/ads`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name: ad.name || "Ad Copy", adset_id: newAdsetId, creative: { creative_id: crId }, status: "PAUSED", access_token: token }),
+                body: adParams,
               })
               const adCreateData = await adCreateRes.json()
               if (adCreateRes.ok && !adCreateData.error) {
                 copyLog.push(`  AD "${ad.name}" → ${adCreateData.id}`)
               } else {
-                copyLog.push(`  AD "${ad.name}" FALLITO: ${adCreateData?.error?.message || JSON.stringify(adCreateData).slice(0, 200)}`)
+                copyLog.push(`  AD "${ad.name}" FALLITO: ${adCreateData?.error?.message || ""} | ${adCreateData?.error?.error_user_msg || ""} | code:${adCreateData?.error?.code} sub:${adCreateData?.error?.error_subcode}`)
               }
             }
           }
