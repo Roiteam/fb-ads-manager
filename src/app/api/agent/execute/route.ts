@@ -159,25 +159,47 @@ export async function POST(request: NextRequest) {
 
     if (action === "sync_campaigns") {
       const { data: accounts } = isAdmin
-        ? await serviceClient.from("fb_ad_accounts").select("id").eq("status", "active")
-        : await serviceClient.from("user_account_assignments").select("fb_ad_account_id").eq("user_id", user.id)
+        ? await serviceClient.from("fb_ad_accounts").select("*").eq("status", "active")
+        : await (async () => {
+            const { data: assignments } = await serviceClient.from("user_account_assignments").select("fb_ad_account_id").eq("user_id", user.id)
+            if (!assignments?.length) return { data: [] }
+            const ids = assignments.map((a: any) => a.fb_ad_account_id)
+            return serviceClient.from("fb_ad_accounts").select("*").in("id", ids)
+          })()
 
-      const ids = isAdmin ? (accounts || []).map((a: any) => a.id) : (accounts || []).map((a: any) => a.fb_ad_account_id)
+      if (!accounts?.length) return NextResponse.json({ success: false, message: "Nessun account Facebook trovato" })
+
       let total = 0
+      const details: string[] = []
 
-      for (const id of ids) {
+      for (const account of accounts) {
         try {
-          const res = await fetch(new URL("/api/facebook/sync", request.url).toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json", cookie: request.headers.get("cookie") || "" },
-            body: JSON.stringify({ accountId: id }),
-          })
-          const data = await res.json()
-          if (data.results) total += data.results.campaigns
-        } catch { /* skip */ }
+          const fbRes = await fetch(`https://graph.facebook.com/v21.0/${account.account_id}/campaigns?fields=id,name,status,objective,daily_budget,lifetime_budget,bid_strategy,start_time,stop_time,created_time,updated_time&limit=100&access_token=${encodeURIComponent(account.access_token)}`)
+          const fbData = await fbRes.json()
+          if (fbData.error) { details.push(`${account.name}: errore — ${fbData.error.message}`); continue }
+          for (const c of fbData.data || []) {
+            await serviceClient.from("campaigns").upsert({
+              fb_campaign_id: c.id,
+              fb_ad_account_id: account.id,
+              name: c.name,
+              status: c.status,
+              objective: c.objective,
+              daily_budget: c.daily_budget ? parseInt(c.daily_budget) : null,
+              lifetime_budget: c.lifetime_budget ? parseInt(c.lifetime_budget) : null,
+              bid_strategy: c.bid_strategy,
+              start_time: c.start_time,
+              stop_time: c.stop_time,
+              created_time: c.created_time,
+              updated_time: c.updated_time,
+              last_synced_at: new Date().toISOString(),
+            }, { onConflict: "fb_campaign_id,fb_ad_account_id" })
+            total++
+          }
+          details.push(`${account.name}: ${fbData.data?.length || 0} campagne`)
+        } catch (e: any) { details.push(`${account.name}: errore — ${e.message}`) }
       }
 
-      return NextResponse.json({ success: true, message: `Sincronizzazione completata: ${total} campagne aggiornate da ${ids.length} account` })
+      return NextResponse.json({ success: true, message: `Sincronizzazione completata: ${total} campagne da ${accounts.length} account\n${details.join("\n")}` })
     }
 
     if (action === "get_campaign_details") {
@@ -503,80 +525,125 @@ export async function POST(request: NextRequest) {
     // ===================================================================
     if (action === "duplicate_campaign") {
       const campaignName = params?.campaignName
+      const campaignId = params?.campaignId
       const newName = params?.newName
       const newBudget = params?.budget
       const newStatus = params?.status || "PAUSED"
 
-      if (!campaignName) return NextResponse.json({ success: false, message: "Nome campagna richiesto" })
+      if (!campaignName && !campaignId) return NextResponse.json({ success: false, message: "Nome o ID campagna richiesto" })
 
-      const { data: campaign } = await serviceClient
-        .from("campaigns").select("*, fb_ad_account:fb_ad_accounts(access_token, account_id)")
-        .ilike("name", `%${campaignName}%`).limit(1).single()
-      if (!campaign) return NextResponse.json({ success: false, message: `Campagna "${campaignName}" non trovata nel database` })
+      // STEP 1: Trova la campagna e il token — prima in Supabase, poi direttamente su Facebook
+      let fbCampaignId: string | null = null
+      let token: string | null = null
+      let accountDbId: string | null = null
+      let origName = campaignName || ""
 
-      const token = (campaign.fb_ad_account as any)?.access_token
-      if (!token) return NextResponse.json({ success: false, message: "Token mancante" })
+      if (campaignId) {
+        // ID diretto passato
+        const { data: c } = await serviceClient.from("campaigns").select("*, fb_ad_account:fb_ad_accounts(access_token, account_id)").eq("fb_campaign_id", campaignId).limit(1).single()
+        if (c) {
+          fbCampaignId = c.fb_campaign_id
+          token = (c.fb_ad_account as any)?.access_token
+          accountDbId = c.fb_ad_account_id
+          origName = c.name
+        }
+      }
+
+      if (!fbCampaignId && campaignName) {
+        const { data: c } = await serviceClient.from("campaigns").select("*, fb_ad_account:fb_ad_accounts(access_token, account_id)").ilike("name", `%${campaignName}%`).limit(1).single()
+        if (c) {
+          fbCampaignId = c.fb_campaign_id
+          token = (c.fb_ad_account as any)?.access_token
+          accountDbId = c.fb_ad_account_id
+          origName = c.name
+        }
+      }
+
+      // Fallback: cerca su Facebook direttamente in tutti gli account
+      if (!fbCampaignId) {
+        const { data: accounts } = await serviceClient.from("fb_ad_accounts").select("*").eq("status", "active")
+        for (const acc of accounts || []) {
+          const searchRes = await fetch(`https://graph.facebook.com/v21.0/${acc.account_id}/campaigns?fields=id,name&filtering=[{"field":"name","operator":"CONTAIN","value":"${encodeURIComponent(campaignName || "")}"}]&limit=5&access_token=${encodeURIComponent(acc.access_token)}`)
+          const searchData = await searchRes.json()
+          const match = (searchData.data || []).find((c: any) => c.name.toLowerCase().includes((campaignName || "").toLowerCase()))
+          if (match) {
+            fbCampaignId = match.id
+            token = acc.access_token
+            accountDbId = acc.id
+            origName = match.name
+            break
+          }
+        }
+      }
+
+      if (!fbCampaignId || !token) {
+        return NextResponse.json({ success: false, message: `Campagna "${campaignName || campaignId}" non trovata né nel database né su Facebook. Campagne disponibili: usa "list_campaigns" per vedere la lista.` })
+      }
 
       try {
-        // Una sola chiamata — come il tasto Duplica del Business Manager
-        const copyRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}/copies`, {
+        // STEP 2: Duplica — una sola chiamata, come il tasto Duplica del BM
+        const copyBody: any = { access_token: token, deep_copy: true, status_option: newStatus === "ACTIVE" ? "ACTIVE" : "PAUSED" }
+        if (newName) { copyBody.rename_options = { rename_strategy: "DEEP_RENAME" }; copyBody.rename_prefix = ""; copyBody.rename_suffix = "" }
+
+        const copyRes = await fetch(`https://graph.facebook.com/v21.0/${fbCampaignId}/copies`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            access_token: token,
-            deep_copy: true,
-            status_option: newStatus === "ACTIVE" ? "ACTIVE" : "PAUSED",
-          }),
+          body: JSON.stringify(copyBody),
         })
         const copyData = await copyRes.json()
 
         if (!copyRes.ok || copyData.error) {
-          const errMsg = copyData?.error?.message || copyRes.status
-          const errDetail = copyData?.error?.error_user_msg || ""
-          return NextResponse.json({ success: false, message: `Errore Facebook nella duplicazione di "${campaign.name}" (ID: ${campaign.fb_campaign_id}):\n${errMsg}${errDetail ? `\n${errDetail}` : ""}` })
+          return NextResponse.json({
+            success: false,
+            message: `Errore Facebook duplicazione "${origName}" (${fbCampaignId}):\n${copyData?.error?.message || copyRes.status}\n${copyData?.error?.error_user_msg || ""}\n\nRisposta raw: ${JSON.stringify(copyData).slice(0, 500)}`,
+          })
         }
 
-        const newCampaignId = copyData.copied_campaign_id || copyData.id
+        const newCampaignId = copyData.copied_campaign_id
         if (!newCampaignId) {
-          return NextResponse.json({ success: false, message: `Facebook non ha restituito l'ID della copia. Controlla nel Business Manager se la campagna è stata duplicata.` })
+          return NextResponse.json({
+            success: false,
+            message: `Facebook ha risposto ma senza copied_campaign_id.\nRisposta: ${JSON.stringify(copyData).slice(0, 500)}\n\nControlla nel Business Manager se è stata creata una copia.`,
+          })
         }
 
-        // Rinomina se richiesto
+        // STEP 3: Rinomina se richiesto
         if (newName) {
-          await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
+          const renameRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ access_token: token, name: newName }),
           })
+          const renameData = await renameRes.json()
+          if (renameData.error) { /* non bloccare per errore rename */ }
         }
 
-        // Cambia budget se richiesto
+        // STEP 4: Cambia budget se richiesto (prova CBO, poi ABO)
         if (newBudget) {
-          const budgetUpdate: any = { access_token: token }
-          // Prova a livello campagna (CBO)
-          budgetUpdate.daily_budget = String(Math.round(Number(newBudget) * 100))
-          const budgetRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
+          const budgetCents = String(Math.round(Number(newBudget) * 100))
+          const cboRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(budgetUpdate),
+            body: JSON.stringify({ access_token: token, daily_budget: budgetCents }),
           })
-          const budgetData = await budgetRes.json()
-          // Se fallisce (ABO), aggiorna ogni adset
-          if (!budgetRes.ok || budgetData.error) {
+          const cboData = await cboRes.json()
+          if (!cboRes.ok || cboData.error) {
             const adsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id&limit=50&access_token=${encodeURIComponent(token)}`)
             const adsetsData = await adsetsRes.json()
             for (const adset of adsetsData.data || []) {
-              try {
-                await fetch(`https://graph.facebook.com/v21.0/${adset.id}`, {
-                  method: "POST", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ access_token: token, daily_budget: String(Math.round(Number(newBudget) * 100)) }),
-                })
-              } catch { /* skip */ }
+              try { await fetch(`https://graph.facebook.com/v21.0/${adset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ access_token: token, daily_budget: budgetCents }) }) } catch { /* skip */ }
             }
           }
         }
 
-        // Verifica risultato
+        // STEP 5: Verifica su Facebook che la copia esiste davvero
         const verifyRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}?fields=id,name,status,daily_budget,lifetime_budget,bid_strategy,objective&access_token=${encodeURIComponent(token)}`)
         const v = await verifyRes.json()
+
+        if (v.error) {
+          return NextResponse.json({
+            success: false,
+            message: `Facebook ha detto di aver duplicato (ID: ${newCampaignId}) ma la verifica fallisce:\n${v.error.message}\n\nControlla nel Business Manager.`,
+          })
+        }
 
         const adsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id,name,status&limit=50&access_token=${encodeURIComponent(token)}`)
         const adsetsData = await adsetsRes.json()
@@ -589,34 +656,40 @@ export async function POST(request: NextRequest) {
           totalAds += adsData.data?.length || 0
         }
 
-        await serviceClient.from("campaigns").insert({
-          fb_campaign_id: newCampaignId,
-          fb_ad_account_id: campaign.fb_ad_account_id,
-          name: v.name || newName || `${campaign.name} - Copy`,
-          status: v.status || newStatus,
-          objective: v.objective || campaign.objective,
-          daily_budget: v.daily_budget ? Number(v.daily_budget) : campaign.daily_budget,
-          bid_strategy: v.bid_strategy || campaign.bid_strategy,
-        })
+        // Salva in Supabase
+        try {
+          await serviceClient.from("campaigns").upsert({
+            fb_campaign_id: newCampaignId,
+            fb_ad_account_id: accountDbId,
+            name: v.name || newName || `${origName} - Copy`,
+            status: v.status || newStatus,
+            objective: v.objective,
+            daily_budget: v.daily_budget ? Number(v.daily_budget) : null,
+            bid_strategy: v.bid_strategy,
+            last_synced_at: new Date().toISOString(),
+          }, { onConflict: "fb_campaign_id,fb_ad_account_id" })
+        } catch { /* non bloccare per errore DB */ }
 
         const isCBO = !!(v.daily_budget || v.lifetime_budget)
-        const adsetList = adsets.map((a: any) => `  • ${a.name} (${a.status})`).join("\n")
+        const adsetList = adsets.length > 0 ? adsets.map((a: any) => `  • ${a.name} (${a.status})`).join("\n") : "  (nessun adset trovato)"
 
         return NextResponse.json({
           success: true,
           message: [
-            `Campagna duplicata!`,
-            `"${campaign.name}" → "${v.name}"`,
+            `DUPLICATA CON SUCCESSO`,
+            `"${origName}" → "${v.name}"`,
             ``,
-            `ID: ${newCampaignId}`,
+            `Facebook Campaign ID: ${newCampaignId}`,
             `Tipo: ${isCBO ? "CBO" : "ABO"}`,
             `Obiettivo: ${v.objective}`,
             `Bid: ${v.bid_strategy || "LOWEST_COST"}`,
-            `Budget: €${v.daily_budget ? Number(v.daily_budget) / 100 : v.lifetime_budget ? Number(v.lifetime_budget) / 100 + " lifetime" : "adset-level"}/giorno`,
+            `Budget: ${v.daily_budget ? "€" + Number(v.daily_budget) / 100 + "/giorno" : v.lifetime_budget ? "€" + Number(v.lifetime_budget) / 100 + " lifetime" : "a livello adset"}`,
             `Stato: ${v.status}`,
             ``,
-            `${adsets.length} adsets, ${totalAds} ads copiati`,
+            `Contenuto copiato: ${adsets.length} adsets, ${totalAds} ads`,
             adsetList,
+            ``,
+            `Verifica nel BM: la campagna "${v.name}" dovrebbe essere visibile ora.`,
           ].join("\n"),
           newCampaignId,
         })
@@ -788,9 +861,6 @@ export async function POST(request: NextRequest) {
         if (dailyBudget) campParams.daily_budget = String(Math.round(Number(dailyBudget) * 100))
         if (lifetimeBudget) campParams.lifetime_budget = String(Math.round(Number(lifetimeBudget) * 100))
         if (bidStrategy) campParams.bid_strategy = bidStrategy
-        if (bidAmount && (bidStrategy === "LOWEST_COST_WITH_BID_CAP" || bidStrategy === "COST_CAP")) {
-          campParams.bid_amount = String(Math.round(Number(bidAmount) * 100))
-        }
         if (lifetimeBudget && !params?.endTime) {
           const end = new Date(); end.setDate(end.getDate() + 30)
           campParams.end_time = end.toISOString()
@@ -981,8 +1051,12 @@ export async function POST(request: NextRequest) {
         steps.push(`3. Ad non creato — fornisci pageId + (imageUrl o videoId) o postId per creare l'ad`)
       }
 
+      const hasAdset = !!newAdsetId
+      const hasAd = !!newAdId
+      const isComplete = hasAdset
+
       const summary = [
-        `Campagna COMPLETA "${campaignName}" creata su ${account.name}!`,
+        isComplete ? `Campagna "${campaignName}" creata su ${account.name}!` : `ATTENZIONE: Campagna "${campaignName}" creata INCOMPLETA su ${account.name}`,
         "",
         ...steps,
         "",
@@ -991,11 +1065,13 @@ export async function POST(request: NextRequest) {
         `Bid: ${bidStrategy}${bidAmount ? ` (cap: €${bidAmount})` : ""}`,
         `Stato: ${status}`,
         resolvedPixelId ? `Pixel: ${resolvedPixelId} [auto-detected]` : null,
-        errors.length > 0 ? `\nAvvisi:\n${errors.join("\n")}` : null,
+        !hasAdset ? `\nERRORE: Adset NON creato — la campagna è un contenitore vuoto!` : null,
+        !hasAd && hasAdset ? `\nNota: Ad non creato — fornisci postId o pageId+imageUrl per aggiungere l'ad` : null,
+        errors.length > 0 ? `\nErrori:\n${errors.join("\n")}` : null,
       ].filter(Boolean)
 
       return NextResponse.json({
-        success: true,
+        success: isComplete,
         message: summary.join("\n"),
         campaignId: newCampaignId,
         adsetId: newAdsetId,
