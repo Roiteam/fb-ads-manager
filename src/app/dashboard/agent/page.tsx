@@ -197,13 +197,15 @@ Ads Manager — Gestione:
 - "search_interests" — Cerca interessi per targeting (extractedData.query)
 
 Ads Manager — Creazione:
-- "create_campaign" — extractedData: name, objective, dailyBudget/lifetimeBudget, bidStrategy (LOWEST_COST_WITHOUT_CAP/COST_CAP/LOWEST_COST_WITH_BID_CAP/LOWEST_COST_WITH_MIN_ROAS), bidAmount (€ cap), roasTarget, budgetRebalance, status, accountName
-- "create_adset" — extractedData: campaignName, name, dailyBudget/lifetimeBudget, optimizationGoal, targeting (JSON), pixelId, customEventType, bidAmount, bidStrategy, roasTarget, dynamicCreative, pacingType ("standard"/"no_pacing" per accelerata), schedule (dayparting), attributionSpec, status
-- "create_ad" — extractedData: adsetName, name, pageId, instagramActorId, link, displayLink, urlTags, primaryText (stringa o array), headline (stringa o array), description (stringa o array), imageUrl/imageUrls (array per carousel/DC), videoId, callToAction, dynamicCreative, postId (usa post esistente con social proof), creativeId (riusa creative), status
-- "get_post_ids" — Recupera post ID dalle ads (extractedData: campaignName/adsetName/adId). Per riutilizzare social proof
+REGOLA: Quando l'utente chiede di "creare una campagna" → usa SEMPRE "create_full_campaign" che crea campagna+adset+ad in un colpo. NON creare contenitori vuoti.
+- "create_full_campaign" — Crea campagna COMPLETA (campagna+adset+ad). extractedData: campaignName, objective, dailyBudget/lifetimeBudget, bidStrategy, bidAmount, accountName, adsetName, optimizationGoal, targeting (JSON), customEventType, pacingType, dynamicCreative, adName, pageId, link, primaryText, headline, description, imageUrl, videoId, callToAction, postId, status. Il pixel viene rilevato automaticamente.
+- "create_campaign" — Solo contenitore campagna (usa SOLO se richiesto esplicitamente)
+- "create_adset" — Aggiunge adset a campagna esistente
+- "create_ad" — Aggiunge ad a adset esistente (con postId per social proof, creativeId per riusare creative)
+- "get_post_ids" — Recupera post ID dalle ads per riutilizzare social proof
 
 Ads Manager — Duplicazione:
-- "duplicate_campaign" — extractedData: campaignName, newName, budget, status
+- "duplicate_campaign" — DEEP COPY: copia TUTTO (adset, ads, creative, targeting, pixel). extractedData: campaignName, newName, budget, status. NON crea contenitori vuoti.
 
 Ads Manager — Modifica:
 - "update_adset" — extractedData: adsetName/adsetId, updates: { name, status, dailyBudget, lifetimeBudget, bidAmount, bidStrategy, roasTarget, targeting, optimizationGoal, pacingType ("standard"/"no_pacing" per accelerata), dynamicCreative, schedule, attributionSpec, pixelId, customEventType, startTime, endTime }
@@ -735,7 +737,7 @@ export default function AgentPage() {
       "update_budget", "sync_campaigns", "get_campaign_details", "get_campaign_structure",
       "sync_traffic_manager", "search_offers", "fetch_offers",
       "publish_wordpress", "change_lp_offer",
-      "create_campaign", "create_adset", "create_ad",
+      "create_campaign", "create_full_campaign", "create_adset", "create_ad",
       "duplicate_campaign", "update_adset", "update_ad",
       "search_interests", "get_post_ids", "get_ad_post_ids",
     ]
@@ -757,6 +759,7 @@ export default function AgentPage() {
       search_offers: () => "Cerca Offerte Network",
       fetch_offers: () => "Carica Offerte Network",
       create_campaign: d => `Crea Campagna "${d.name || ""}"`,
+      create_full_campaign: d => `Crea Campagna Completa "${d.campaignName || d.name || ""}"`,
       create_adset: d => `Crea Adset "${d.name || ""}"`,
       create_ad: d => `Crea Ad "${d.name || ""}"`,
       duplicate_campaign: d => `Duplica "${d.campaignName || ""}"`,
@@ -897,7 +900,7 @@ export default function AgentPage() {
       return
     }
 
-    const adsActions = ["pause_campaign", "activate_campaign", "pause_multiple", "activate_multiple", "update_budget", "sync_campaigns", "get_campaign_details", "get_campaign_structure", "sync_traffic_manager", "search_offers", "fetch_offers", "create_campaign", "create_adset", "create_ad", "duplicate_campaign", "update_adset", "update_ad", "search_interests", "get_post_ids", "get_ad_post_ids"]
+    const adsActions = ["pause_campaign", "activate_campaign", "pause_multiple", "activate_multiple", "update_budget", "sync_campaigns", "get_campaign_details", "get_campaign_structure", "sync_traffic_manager", "search_offers", "fetch_offers", "create_campaign", "create_full_campaign", "create_adset", "create_ad", "duplicate_campaign", "update_adset", "update_ad", "search_interests", "get_post_ids", "get_ad_post_ids"]
     const funnelActions = ["create_landing", "create_video_ads", "create_retargeting", "create_funnel", "translate_landing", "generate_images"]
 
     if (value === "publish_wordpress" && params) {
