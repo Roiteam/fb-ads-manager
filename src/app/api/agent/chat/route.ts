@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient, createServiceClient } from "@/lib/supabase/server"
 
+export const maxDuration = 60
+
 const SYSTEM_PROMPT = `Sei il consulente marketing #1 al mondo. Hai 15+ anni come Senior Media Buyer, Performance Marketer, Copywriter e Growth Strategist. Sei un genio del marketing digitale, dell'affiliate marketing, del media buying su Facebook/TikTok/Google e della creazione di funnel ad alta conversione.
 
 SEI UN ESPERTO COMPLETO — puoi parlare di QUALSIASI argomento marketing:
