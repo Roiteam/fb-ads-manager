@@ -515,99 +515,110 @@ export async function POST(request: NextRequest) {
       if (!campaign) return NextResponse.json({ success: false, message: `Campagna "${campaignName}" non trovata` })
 
       const token = (campaign.fb_ad_account as any)?.access_token
+      const accountId = (campaign.fb_ad_account as any)?.account_id
       if (!token) return NextResponse.json({ success: false, message: "Token mancante" })
 
       try {
-        const copyParams: any = {
-          access_token: token,
-          deep_copy: true,
-          status_option: newStatus === "ACTIVE" ? "ACTIVE" : "PAUSED",
-          rename_strategy: "DEEP_RENAME",
-        }
-        if (newName) {
-          copyParams.rename_prefix = ""
-          copyParams.rename_suffix = ""
+        // STEP 1: Leggi la struttura COMPLETA della campagna originale da Facebook
+        const origRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}?fields=id,name,status,objective,daily_budget,lifetime_budget,bid_strategy,budget_remaining,special_ad_categories,start_time,end_time&access_token=${encodeURIComponent(token)}`)
+        const origData = await origRes.json()
+        const isCBO = !!(origData.daily_budget || origData.lifetime_budget)
+
+        const origAdsetsRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}/adsets?fields=id,name,status,daily_budget,lifetime_budget,targeting,optimization_goal,billing_event,bid_amount,bid_strategy,promoted_object,pacing_type,start_time,end_time&limit=50&access_token=${encodeURIComponent(token)}`)
+        const origAdsetsData = await origAdsetsRes.json()
+        const origAdsets = origAdsetsData.data || []
+
+        const origAdsByAdset: Record<string, any[]> = {}
+        for (const adset of origAdsets) {
+          const adsRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/ads?fields=id,name,status,creative{id,effective_object_story_id,object_story_id}&limit=50&access_token=${encodeURIComponent(token)}`)
+          const adsData = await adsRes.json()
+          origAdsByAdset[adset.id] = adsData.data || []
         }
 
-        let copyRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}/copies`, {
+        const totalOrigAds = Object.values(origAdsByAdset).reduce((sum, ads) => sum + ads.length, 0)
+
+        // STEP 2: Duplica la campagna via API Facebook
+        const copyRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}/copies`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(copyParams),
+          body: JSON.stringify({
+            access_token: token,
+            deep_copy: true,
+            status_option: newStatus === "ACTIVE" ? "ACTIVE" : "PAUSED",
+          }),
         })
-        let copyData = await copyRes.json()
-
-        if ((!copyRes.ok || copyData.error) && copyData?.error?.message?.includes("deep_copy")) {
-          delete copyParams.deep_copy
-          delete copyParams.rename_strategy
-          copyRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}/copies`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(copyParams),
-          })
-          copyData = await copyRes.json()
-        }
+        const copyData = await copyRes.json()
 
         if (!copyRes.ok || copyData.error) {
-          return NextResponse.json({ success: false, message: `Errore duplicazione: ${copyData?.error?.message || copyRes.status}` })
+          return NextResponse.json({ success: false, message: `Errore duplicazione Facebook: ${copyData?.error?.message || copyRes.status}\n\nCampagna originale: ${origData.name}\nTipo: ${isCBO ? "CBO" : "ABO"}\nAdsets: ${origAdsets.length}\nAds: ${totalOrigAds}` })
         }
 
-        const newCampaignId = copyData.copied_campaign_id || copyData.campaign_id_new || copyData.id
-        if (!newCampaignId) return NextResponse.json({ success: false, message: `Duplicazione avviata ma ID non restituito. Risposta: ${JSON.stringify(copyData)}` })
+        const newCampaignId = copyData.copied_campaign_id || copyData.id
+        if (!newCampaignId) {
+          return NextResponse.json({ success: false, message: `Facebook ha accettato la duplicazione ma non ha restituito l'ID. Controlla nel Business Manager.` })
+        }
 
-        const updates: Record<string, string> = { access_token: token }
-        if (newName) updates.name = newName
-        if (newBudget) updates.daily_budget = String(Math.round(Number(newBudget) * 100))
-
+        // STEP 3: Rinomina e cambia budget se richiesto
         if (newName || newBudget) {
+          const updates: any = { access_token: token }
+          if (newName) updates.name = newName
+          if (newBudget && isCBO) updates.daily_budget = String(Math.round(Number(newBudget) * 100))
           await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updates),
           })
         }
 
-        const verifyRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}?fields=id,name,status,daily_budget&access_token=${encodeURIComponent(token)}`)
+        // STEP 4: Verifica cosa è stato copiato
+        const verifyRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}?fields=id,name,status,daily_budget,lifetime_budget,bid_strategy&access_token=${encodeURIComponent(token)}`)
         const verifyData = await verifyRes.json()
 
-        let adsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id,name,status&limit=50&access_token=${encodeURIComponent(token)}`)
-        let adsetsData = await adsetsRes.json()
-        let adsetCount = adsetsData.data?.length || 0
+        const newAdsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id,name,status,daily_budget&limit=50&access_token=${encodeURIComponent(token)}`)
+        const newAdsetsData = await newAdsetsRes.json()
+        const newAdsets = newAdsetsData.data || []
 
-        if (adsetCount === 0) {
-          const origAdsetsRes = await fetch(`https://graph.facebook.com/v21.0/${campaign.fb_campaign_id}/adsets?fields=id,name&limit=50&access_token=${encodeURIComponent(token)}`)
-          const origAdsetsData = await origAdsetsRes.json()
-          for (const origAdset of origAdsetsData.data || []) {
-            try {
-              const adsetCopyRes = await fetch(`https://graph.facebook.com/v21.0/${origAdset.id}/copies`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  access_token: token,
-                  campaign_id: newCampaignId,
-                  deep_copy: true,
-                  status_option: "PAUSED",
-                }),
-              })
-              const adsetCopyData = await adsetCopyRes.json()
-              if (!adsetCopyRes.ok || adsetCopyData.error) {
-                await fetch(`https://graph.facebook.com/v21.0/${origAdset.id}/copies`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ access_token: token, campaign_id: newCampaignId, status_option: "PAUSED" }),
-                })
-              }
-            } catch { /* skip single adset */ }
-          }
-          adsetsRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id,name,status&limit=50&access_token=${encodeURIComponent(token)}`)
-          adsetsData = await adsetsRes.json()
-          adsetCount = adsetsData.data?.length || 0
-        }
-
-        let adCount = 0
-        for (const adset of adsetsData.data || []) {
+        let newAdCount = 0
+        for (const adset of newAdsets) {
           const adsRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/ads?fields=id&limit=100&access_token=${encodeURIComponent(token)}`)
           const adsData = await adsRes.json()
-          adCount += adsData.data?.length || 0
+          newAdCount += adsData.data?.length || 0
+        }
+
+        // STEP 5: Se la copia è incompleta, copia manualmente gli adset mancanti
+        if (newAdsets.length < origAdsets.length) {
+          for (const origAdset of origAdsets) {
+            const alreadyCopied = newAdsets.some((na: any) => na.name === origAdset.name || na.name === `${origAdset.name} - Copy`)
+            if (alreadyCopied) continue
+            try {
+              await fetch(`https://graph.facebook.com/v21.0/${origAdset.id}/copies`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ access_token: token, campaign_id: newCampaignId, deep_copy: true, status_option: "PAUSED" }),
+              })
+            } catch { /* skip */ }
+          }
+          const refreshRes = await fetch(`https://graph.facebook.com/v21.0/${newCampaignId}/adsets?fields=id,name,status,daily_budget&limit=50&access_token=${encodeURIComponent(token)}`)
+          const refreshData = await refreshRes.json()
+          newAdsets.length = 0
+          newAdsets.push(...(refreshData.data || []))
+
+          newAdCount = 0
+          for (const adset of newAdsets) {
+            const adsRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/ads?fields=id&limit=100&access_token=${encodeURIComponent(token)}`)
+            const adsData = await adsRes.json()
+            newAdCount += adsData.data?.length || 0
+          }
+        }
+
+        // Se ABO e nuovo budget richiesto, aggiorna budget su ogni adset
+        if (newBudget && !isCBO) {
+          for (const adset of newAdsets) {
+            try {
+              await fetch(`https://graph.facebook.com/v21.0/${adset.id}`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ access_token: token, daily_budget: String(Math.round(Number(newBudget) * 100)) }),
+              })
+            } catch { /* skip */ }
+          }
         }
 
         await serviceClient.from("campaigns").insert({
@@ -617,16 +628,41 @@ export async function POST(request: NextRequest) {
           status: verifyData.status || newStatus,
           objective: campaign.objective,
           daily_budget: verifyData.daily_budget ? Number(verifyData.daily_budget) : campaign.daily_budget,
-          bid_strategy: campaign.bid_strategy,
+          bid_strategy: verifyData.bid_strategy || campaign.bid_strategy,
         })
 
-        const adsetList = (adsetsData.data || []).map((a: any) => `  • ${a.name} (${a.status})`).join("\n")
+        const budgetType = isCBO ? "CBO (budget a livello campagna)" : "ABO (budget a livello adset)"
+        const budgetStr = isCBO
+          ? `€${verifyData.daily_budget ? Number(verifyData.daily_budget) / 100 : origData.daily_budget ? Number(origData.daily_budget) / 100 : "?"}/giorno`
+          : newAdsets.map((a: any) => `  ${a.name}: €${a.daily_budget ? Number(a.daily_budget) / 100 : "?"}/giorno`).join("\n")
+
+        const adsetList = newAdsets.map((a: any) => `  • ${a.name} (${a.status})`).join("\n")
+
+        const report = [
+          `Campagna duplicata!`,
+          `"${origData.name}" → "${verifyData.name || newName || origData.name + ' - Copy'}"`,
+          ``,
+          `Struttura: ${budgetType}`,
+          `Bid Strategy: ${verifyData.bid_strategy || origData.bid_strategy || "LOWEST_COST"}`,
+          `Obiettivo: ${origData.objective}`,
+          ``,
+          isCBO ? `Budget campagna: ${budgetStr}` : `Budget per adset:\n${budgetStr}`,
+          ``,
+          `Originale: ${origAdsets.length} adsets, ${totalOrigAds} ads`,
+          `Copia: ${newAdsets.length} adsets, ${newAdCount} ads`,
+          ``,
+          `Adsets copiati:`,
+          adsetList,
+          ``,
+          `Nuovo ID: ${newCampaignId}`,
+          `Stato: ${verifyData.status || newStatus}`,
+        ]
 
         return NextResponse.json({
           success: true,
-          message: `Campagna duplicata con DEEP COPY completo!\n"${campaign.name}" → "${verifyData.name || newName || campaign.name + ' - Copy'}"\n\nNuovo ID: ${newCampaignId}\nStato: ${verifyData.status || newStatus}\nBudget: €${verifyData.daily_budget ? Number(verifyData.daily_budget) / 100 : "invariato"}/giorno\n\nStruttura copiata:\n${adsetCount} Adset${adsetCount !== 1 ? "s" : ""}\n${adCount} Ad${adCount !== 1 ? "s" : ""}\n${adsetList ? `\nAdsets:\n${adsetList}` : ""}`,
+          message: report.join("\n"),
           newCampaignId,
-          structure: { adsets: adsetCount, ads: adCount },
+          structure: { type: isCBO ? "CBO" : "ABO", adsets: newAdsets.length, ads: newAdCount, originalAdsets: origAdsets.length, originalAds: totalOrigAds },
         })
       } catch (err: any) {
         return NextResponse.json({ success: false, message: `Errore: ${err.message}` })
@@ -855,7 +891,8 @@ export async function POST(request: NextRequest) {
           targeting: JSON.stringify(resolvedTargeting),
           access_token: token,
         }
-        if (!lifetimeBudget && !dailyBudget) adsetParams.daily_budget = "2000"
+        const campaignHasBudget = !!(dailyBudget || lifetimeBudget)
+        if (!campaignHasBudget) adsetParams.daily_budget = "2000"
         if (resolvedPixelId) {
           adsetParams.promoted_object = JSON.stringify({ pixel_id: resolvedPixelId, custom_event_type: customEventType })
         }
@@ -1050,6 +1087,14 @@ export async function POST(request: NextRequest) {
       const accountId = (campaign.fb_ad_account as any)?.account_id
       if (!token || !accountId) return NextResponse.json({ success: false, message: "Token o account ID mancante" })
 
+      // Leggi la campagna da Facebook per capire se è CBO o ABO
+      let isCBO = false
+      try {
+        const campInfoRes = await fetch(`https://graph.facebook.com/v21.0/${fbCampaignId}?fields=daily_budget,lifetime_budget&access_token=${encodeURIComponent(token)}`)
+        const campInfo = await campInfoRes.json()
+        isCBO = !!(campInfo.daily_budget || campInfo.lifetime_budget)
+      } catch { /* assume ABO */ }
+
       try {
         const fbParams: any = {
           name,
@@ -1060,8 +1105,13 @@ export async function POST(request: NextRequest) {
           targeting: typeof targeting === "string" ? targeting : JSON.stringify(targeting),
           access_token: token,
         }
-        if (dailyBudget) fbParams.daily_budget = String(Math.round(Number(dailyBudget) * 100))
-        if (lifetimeBudget) fbParams.lifetime_budget = String(Math.round(Number(lifetimeBudget) * 100))
+        if (isCBO && (dailyBudget || lifetimeBudget)) {
+          // CBO: budget è a livello campagna, non mettere budget sull'adset
+        } else {
+          if (dailyBudget) fbParams.daily_budget = String(Math.round(Number(dailyBudget) * 100))
+          if (lifetimeBudget) fbParams.lifetime_budget = String(Math.round(Number(lifetimeBudget) * 100))
+          if (!dailyBudget && !lifetimeBudget && !isCBO) fbParams.daily_budget = "2000"
+        }
         if (bidAmount) fbParams.bid_amount = String(Math.round(Number(bidAmount) * 100))
         if (bidStrategy) fbParams.bid_strategy = bidStrategy
         if (roasTarget) fbParams.roas_average_floor = String(Math.round(Number(roasTarget) * 10000))

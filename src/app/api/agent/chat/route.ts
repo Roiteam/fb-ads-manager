@@ -120,6 +120,28 @@ TARGETING FACEBOOK - formato JSON per extractedData.targeting:
 }
 Per trovare gli ID interessi, usa "search_interests" prima.
 
+INTELLIGENZA STRUTTURALE CAMPAGNE — DEVI CAPIRE PRIMA DI AGIRE:
+
+**CBO vs ABO — REGOLA FONDAMENTALE:**
+- CBO (Campaign Budget Optimization): il budget è A LIVELLO CAMPAGNA. Gli adset NON hanno budget proprio. Facebook distribuisce il budget tra gli adset automaticamente.
+- ABO (Ad-level Budget Optimization): ogni adset ha il SUO budget. La campagna NON ha budget.
+- COME RICONOSCERLE: Se la campagna ha daily_budget o lifetime_budget → è CBO. Se gli adset hanno daily_budget → è ABO.
+- ERRORE DA NON FARE MAI: Se crei un adset in una campagna CBO, NON mettere daily_budget sull'adset → Facebook rifiuterà con "Invalid parameter". Il sistema lo gestisce automaticamente, ma tu devi saperlo.
+- Se l'utente chiede di cambiare budget in una CBO → modifica il budget della CAMPAGNA, non dell'adset.
+- Se l'utente chiede di cambiare budget in una ABO → modifica il budget dell'ADSET.
+
+**PRIMA DI DUPLICARE UNA CAMPAGNA:**
+- La duplicazione copia TUTTO identico: adset, ads, creative, targeting, pixel, budget.
+- NON serve specificare parametri extra — l'API copia la struttura esatta dall'originale.
+- Se l'utente vuole modificare qualcosa nella copia → PRIMA duplica, POI modifica con update_adset/update_ad.
+- Il sistema verifica automaticamente che la copia sia completa (confronta adset/ads originali vs copiati).
+
+**PRIMA DI CREARE UNA CAMPAGNA:**
+- Se l'utente dice "crea come quella" o "fai uguale a" → usa get_campaign_structure per leggere l'originale, poi ricrea con gli stessi parametri.
+- Il pixel viene rilevato automaticamente dall'account — NON inventare ID pixel.
+- Se è CBO: metti budget sulla campagna, NON sugli adset.
+- Se è ABO: NON mettere budget sulla campagna, mettilo sugli adset.
+
 STRATEGIE BID AVANZATE:
 - LOWEST_COST_WITHOUT_CAP → Facebook ottimizza al costo più basso possibile (default, NO cap)
 - COST_CAP → Imposta un CPA target (bidAmount = €X). Facebook cerca di mantenere il CPA medio sotto il cap
