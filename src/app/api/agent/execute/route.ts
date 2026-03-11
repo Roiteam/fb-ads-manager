@@ -535,15 +535,16 @@ export async function POST(request: NextRequest) {
       // STEP 1: Trova la campagna e il token — prima in Supabase, poi direttamente su Facebook
       let fbCampaignId: string | null = null
       let token: string | null = null
+      let accountId: string | null = null
       let accountDbId: string | null = null
       let origName = campaignName || ""
 
       if (campaignId) {
-        // ID diretto passato
         const { data: c } = await serviceClient.from("campaigns").select("*, fb_ad_account:fb_ad_accounts(access_token, account_id)").eq("fb_campaign_id", campaignId).limit(1).single()
         if (c) {
           fbCampaignId = c.fb_campaign_id
           token = (c.fb_ad_account as any)?.access_token
+          accountId = (c.fb_ad_account as any)?.account_id
           accountDbId = c.fb_ad_account_id
           origName = c.name
         }
@@ -554,6 +555,7 @@ export async function POST(request: NextRequest) {
         if (c) {
           fbCampaignId = c.fb_campaign_id
           token = (c.fb_ad_account as any)?.access_token
+          accountId = (c.fb_ad_account as any)?.account_id
           accountDbId = c.fb_ad_account_id
           origName = c.name
         }
@@ -569,6 +571,7 @@ export async function POST(request: NextRequest) {
           if (match) {
             fbCampaignId = match.id
             token = acc.access_token
+            accountId = acc.account_id
             accountDbId = acc.id
             origName = match.name
             break
@@ -580,12 +583,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: `Campagna "${campaignName || campaignId}" non trovata né nel database né su Facebook. Campagne disponibili: usa "list_campaigns" per vedere la lista.` })
       }
 
-      // Trova l'account_id per le chiamate che lo richiedono
-      let accountId: string | null = null
-      if (accountDbId) {
-        const { data: acc } = await serviceClient.from("fb_ad_accounts").select("account_id").eq("id", accountDbId).single()
-        accountId = acc?.account_id || null
-      }
+      if (!accountId) return NextResponse.json({ success: false, message: `Account Facebook non trovato per la campagna "${origName}". Impossibile duplicare.` })
 
       try {
         let newCampaignId: string | null = null
@@ -636,29 +634,21 @@ export async function POST(request: NextRequest) {
           const origAdsets = origAdsetsData.data || []
 
           for (const adset of origAdsets) {
-            // Livello 2: prova deep_copy sull'adset
-            const adsetCopyRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/copies`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ access_token: token, campaign_id: newCampaignId, deep_copy: true, status_option: "PAUSED" }),
-            })
-            const adsetCopyData = await adsetCopyRes.json()
-
-            if (adsetCopyRes.ok && !adsetCopyData.error) continue
-
-            // Livello 3: adset ha troppi ads → copia adset vuoto + copia ogni ad singolarmente
+            // Copia adset SENZA deep_copy (shell)
             const adsetShellRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/copies`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ access_token: token, campaign_id: newCampaignId, deep_copy: false, status_option: "PAUSED" }),
             })
             const adsetShellData = await adsetShellRes.json()
-            const newAdsetId = adsetShellData.copied_adset_id
+            const newAdsetId = adsetShellData.copied_adset_id || adsetShellData.id
             if (!newAdsetId) continue
 
-            // Leggi gli ads originali e ricreali nel nuovo adset usando lo stesso creative
+            // Leggi TUTTI gli ads originali con il loro creative ID
             const origAdsRes = await fetch(`https://graph.facebook.com/v21.0/${adset.id}/ads?fields=id,name,status,creative{id}&limit=100&access_token=${encodeURIComponent(token)}`)
             const origAdsData = await origAdsRes.json()
+
+            // Crea ogni ad nel nuovo adset con lo stesso creative
             for (const ad of origAdsData.data || []) {
               const crId = ad.creative?.id
               if (!crId) continue
