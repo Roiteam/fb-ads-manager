@@ -642,7 +642,7 @@ export async function POST(request: NextRequest) {
             // Copia adset shell (form-encoded)
             const adsetParams = new URLSearchParams()
             adsetParams.append("access_token", token)
-            adsetParams.append("campaign_id", newCampaignId)
+            adsetParams.append("campaign_id", newCampaignId!)
             adsetParams.append("deep_copy", "false")
             adsetParams.append("status_option", "PAUSED")
 
